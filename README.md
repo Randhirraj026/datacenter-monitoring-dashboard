@@ -57,7 +57,6 @@ VCENTER_HOST=ip address
 VCENTER_USER=administrator@vsphere.local
 VCENTER_PASSWORD=...
 ILO_HOST_1=ip address
-ILO_USER_1=Administrator
 ILO_PASS_1=...
 ```
 Start the service:
