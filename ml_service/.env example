@@ -1,0 +1,6 @@
+PGHOST=localhost
+PGPORT=5432
+PGDATABASE=superadmin_db
+PGUSER=postgres
+PGPASSWORD=your_secure_password_here
+

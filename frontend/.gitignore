@@ -1,0 +1,36 @@
+.env
+.env.local
+.env.*.local
+dist
+.env.*
+*.env
+
+# Node modules
+node_modules/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build folders
+dist/
+build/
+
+# Python (ML repo)
+__pycache__/
+*.pyc
+venv/
+.env/
+
+# Database
+*.sqlite
+*.db
+
+# IDE
+.vscode/
+.idea/
