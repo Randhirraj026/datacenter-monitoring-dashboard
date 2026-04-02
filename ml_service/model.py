@@ -47,8 +47,11 @@ def train_and_predict_lstm(df: pd.DataFrame, metric: str, forecast_hours: int = 
     train_data = torch.FloatTensor(data_normalized).view(-1)
     
     # Using last 4 hours (120 points) as sequence window to learn the curve/shape better
-    train_window = min(120, len(train_data) - 10) 
-    train_inout_seq = create_inout_sequences(train_data, train_window)
+    train_window = min(120, len(train_data) - 10)
+    train_size = max(train_window + 1, int(len(train_data) * 0.8))
+    train_size = min(train_size, len(train_data) - 1)
+
+    train_inout_seq = create_inout_sequences(train_data[:train_size], train_window)
     
     model = LSTMModel()
     loss_function = nn.MSELoss()
@@ -64,6 +67,38 @@ def train_and_predict_lstm(df: pd.DataFrame, metric: str, forecast_hours: int = 
             single_loss = loss_function(y_pred, labels)
             single_loss.backward()
             optimizer.step()
+
+    validation_metrics = {}
+    if train_size < len(train_data):
+        val_seq_data = train_data[train_size - train_window:]
+        val_inout_seq = create_inout_sequences(val_seq_data, train_window)
+        if val_inout_seq:
+            predictions_norm = []
+            labels_norm = []
+            with torch.no_grad():
+                for seq, labels in val_inout_seq:
+                    y_pred = model(seq)
+                    predictions_norm.append(y_pred.item())
+                    labels_norm.append(labels.item())
+
+            if predictions_norm:
+                pred_inv = scaler.inverse_transform(np.array(predictions_norm).reshape(-1, 1)).flatten()
+                label_inv = scaler.inverse_transform(np.array(labels_norm).reshape(-1, 1)).flatten()
+                rmse = float(np.sqrt(np.mean((label_inv - pred_inv) ** 2)))
+                mae = float(np.mean(np.abs(label_inv - pred_inv)))
+                abs_diff = np.abs(label_inv - pred_inv)
+                nonzero = np.where(np.abs(label_inv) > 1e-8)[0]
+                if len(nonzero):
+                    mape = float(np.mean(abs_diff[nonzero] / np.abs(label_inv[nonzero]))) * 100.0
+                else:
+                    mape = float(np.mean(abs_diff)) * 100.0 / (np.mean(np.abs(label_inv)) + 1e-8)
+                accuracy_pct = max(0.0, min(100.0, 100.0 - mape))
+                validation_metrics = {
+                    "rmse": round(rmse, 4),
+                    "mae": round(mae, 4),
+                    "mape": round(mape, 4),
+                    "accuracy_pct": round(accuracy_pct, 2)
+                }
 
     model.eval()
     test_inputs = train_data[-train_window:].tolist()
@@ -111,4 +146,7 @@ def train_and_predict_lstm(df: pd.DataFrame, metric: str, forecast_hours: int = 
             "value": float(realistic_val)
         })
         
-    return results
+    return {
+        "predictions": results,
+        "metrics": validation_metrics
+    }

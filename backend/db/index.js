@@ -595,53 +595,78 @@ async function getSuperAdminBundle(filters = {}) {
     if (!pool) return null;
 
     const { start, end } = parseTimeWindow(filters);
-    const baseParams = [start, end];
-    const hostFilter = filters.hostId ? ` AND h.id = $3` : '';
-    const datastoreFilter = filters.datastoreId ? ` AND d.id = $${filters.hostId ? 4 : 3}` : '';
-    const vmFilter = filters.vmId ? ` AND vm.id = $${filters.hostId ? 4 : 3}` : '';
+    const hostId = filters.hostId ? Number(filters.hostId) : null;
+    const vmId = filters.vmId ? Number(filters.vmId) : null;
+    const datastoreId = filters.datastoreId ? Number(filters.datastoreId) : null;
 
-    const paramsForHostMetrics = filters.hostId ? [...baseParams, filters.hostId] : baseParams;
-    const paramsForDatastoreMetrics = filters.datastoreId
-        ? [...paramsForHostMetrics, filters.datastoreId]
-        : paramsForHostMetrics;
-    const paramsForVmEvents = filters.vmId ? [...paramsForHostMetrics, filters.vmId] : paramsForHostMetrics;
+    const validHostId = Number.isFinite(hostId);
+    const validVmId = Number.isFinite(vmId);
+    const validDatastoreId = Number.isFinite(datastoreId);
+
+    const baseParams = [start, end];
+    const hostMetricsFilter = validHostId ? ` AND hm.host_id = $3` : '';
+    const paramsForHostMetrics = validHostId ? [...baseParams, hostId] : baseParams;
+
+    const datastoreFilter = validDatastoreId ? ` AND dm.datastore_id = $3` : '';
+    const paramsForDatastoreMetrics = validDatastoreId ? [...baseParams, datastoreId] : baseParams;
+
+    const vmEventFilters = [];
+    const paramsForVmEvents = [...baseParams];
+    let nextVmEventParam = 3;
+
+    if (validHostId) {
+        vmEventFilters.push(` AND ev.host_id = $${nextVmEventParam}`);
+        paramsForVmEvents.push(hostId);
+        nextVmEventParam += 1;
+    }
+
+    if (validVmId) {
+        vmEventFilters.push(` AND vm.id = $${nextVmEventParam}`);
+        paramsForVmEvents.push(vmId);
+        nextVmEventParam += 1;
+    }
 
     const [hostsResult, vmsResult, datastoresResult, hostMetricsResult, datastoreMetricsResult, vmEventsResult] = await Promise.all([
-        pool.query(`SELECT id, host_name AS name, total_cores, total_memory_gb FROM hosts WHERE is_active = TRUE ORDER BY host_name`),
-        pool.query(`SELECT id, vm_name AS name, host_id FROM virtual_machines ORDER BY vm_name`),
-        pool.query(`SELECT id, datastore_name AS name FROM datastores WHERE is_active = TRUE ORDER BY datastore_name`),
-        pool.query(
-            `SELECT hm.ts, hm.host_id, h.host_name, hm.cpu_usage_pct, hm.memory_usage_pct, hm.power_kw, hm.temperature_c, hm.status
+        pool.query({ text: `SELECT id, host_name AS name, total_cores, total_memory_gb FROM hosts WHERE is_active = TRUE ORDER BY host_name`, values: [], simple: true }),
+        pool.query({ text: `SELECT id, vm_name AS name, host_id FROM virtual_machines ORDER BY vm_name`, values: [], simple: true }),
+        pool.query({ text: `SELECT id, datastore_name AS name FROM datastores WHERE is_active = TRUE ORDER BY datastore_name`, values: [], simple: true }),
+        pool.query({
+            text: `SELECT hm.ts, hm.host_id, h.host_name, hm.cpu_usage_pct, hm.memory_usage_pct, hm.power_kw, hm.temperature_c, hm.status
              FROM host_metrics hm
              JOIN hosts h ON h.id = hm.host_id
-             WHERE hm.ts BETWEEN $1 AND $2${hostFilter}
+             WHERE hm.ts BETWEEN $1 AND $2${hostMetricsFilter}
              ORDER BY hm.ts ASC`,
-            paramsForHostMetrics
-        ),
-        pool.query(
-            `SELECT dm.ts, dm.datastore_id, d.datastore_name, dm.total_capacity_gb, dm.used_space_gb, dm.free_space_gb, dm.status
+            values: paramsForHostMetrics,
+            simple: true,
+        }),
+        pool.query({
+            text: `SELECT dm.ts, dm.datastore_id, d.datastore_name, dm.total_capacity_gb, dm.used_space_gb, dm.free_space_gb, dm.status
              FROM datastore_metrics dm
              JOIN datastores d ON d.id = dm.datastore_id
              WHERE dm.ts BETWEEN $1 AND $2${datastoreFilter}
              ORDER BY dm.ts ASC`,
-            paramsForDatastoreMetrics
-        ),
-        pool.query(
-            `SELECT ev.id, ev.ts, ev.vm_id, ev.host_id, ev.vm_name, ev.event_type, ev.status, h.host_name
+            values: paramsForDatastoreMetrics,
+            simple: true,
+        }),
+        pool.query({
+            text: `SELECT ev.id, ev.ts, ev.vm_id, ev.host_id, ev.vm_name, ev.event_type, ev.status, h.host_name
              FROM vm_events ev
              LEFT JOIN hosts h ON h.id = ev.host_id
              LEFT JOIN virtual_machines vm ON vm.id = ev.vm_id
-             WHERE ev.ts BETWEEN $1 AND $2${vmFilter}
+             WHERE ev.ts BETWEEN $1 AND $2${vmEventFilters.join('')}
              ORDER BY ev.ts DESC`,
-            paramsForVmEvents
-        ),
+            values: paramsForVmEvents,
+            simple: true,
+        }),
     ]);
 
-    const currentVmsResult = await pool.query(`
-        SELECT id, status, is_deleted
-        FROM virtual_machines
-        WHERE is_deleted = FALSE
-    `);
+    const currentVmsResult = await pool.query({
+        text: `SELECT id, status, is_deleted, host_id
+         FROM virtual_machines
+         WHERE is_deleted = FALSE${validHostId ? ' AND host_id = $1' : ''}`,
+        values: validHostId ? [hostId] : [],
+        simple: true,
+    });
 
     const hostMetrics = hostMetricsResult.rows.map((row) => ({
         id: `${row.host_id}-${row.ts.toISOString()}`,
@@ -693,6 +718,28 @@ async function getSuperAdminBundle(filters = {}) {
         if (row.eventType === 'DELETED') current.deletedCount += 1;
         vmLifecycleMap.set(key, current);
     });
+
+    const fillLifecycleDates = () => {
+        const bucketStart = new Date(start);
+        bucketStart.setHours(0, 0, 0, 0);
+        const bucketEnd = new Date(end);
+        bucketEnd.setHours(0, 0, 0, 0);
+
+        for (let cursor = new Date(bucketStart); cursor <= bucketEnd; cursor.setDate(cursor.getDate() + 1)) {
+            const key = cursor.toISOString().slice(0, 10);
+            if (!vmLifecycleMap.has(key)) {
+                vmLifecycleMap.set(key, {
+                    statDate: key,
+                    createdCount: 0,
+                    deletedCount: 0,
+                    runningCount: runningVms,
+                    stoppedCount: stoppedVms,
+                });
+            }
+        }
+    };
+
+    fillLifecycleDates();
 
     const hourlyPowerMap = new Map();
     hostMetrics.forEach((row) => {

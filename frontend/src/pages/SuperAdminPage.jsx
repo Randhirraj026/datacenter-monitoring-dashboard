@@ -210,6 +210,50 @@ function aggregateNetwork(rows = []) {
   }
 }
 
+function aggregateVmLifecycle(rows = []) {
+  const grouped = new Map()
+  rows.forEach((row) => {
+    const current = grouped.get(row.statDate) || { createdCount: 0, deletedCount: 0, runningCount: 0 }
+    current.createdCount += Number(row.createdCount || 0)
+    current.deletedCount += Number(row.deletedCount || 0)
+    current.runningCount += Number(row.runningCount || 0)
+    grouped.set(row.statDate, current)
+  })
+
+  // statDate might be a date string 'YYYY-MM-DD' or timestamp, string sort works or Date parse
+  const labels = Array.from(grouped.keys()).sort((a, b) => new Date(a) - new Date(b))
+
+  return {
+    labels: labels,
+    datasets: [
+      {
+        type: 'bar',
+        label: 'Created',
+        data: labels.map((label) => grouped.get(label).createdCount),
+        backgroundColor: 'rgba(37,99,235,0.78)',
+        borderRadius: 8,
+      },
+      {
+        type: 'bar',
+        label: 'Deleted',
+        data: labels.map((label) => grouped.get(label).deletedCount),
+        backgroundColor: 'rgba(239,68,68,0.72)',
+        borderRadius: 8,
+      },
+      {
+        type: 'line',
+        label: 'Running',
+        data: labels.map((label) => grouped.get(label).runningCount),
+        borderColor: '#16a34a',
+        backgroundColor: 'rgba(22,163,74,0.12)',
+        tension: 0.3,
+        pointRadius: 2,
+        borderWidth: 2,
+      },
+    ],
+  }
+}
+
 function aggregateSummaryMetrics(cpuRows = [], memoryRows = [], storageRows = [], powerRows = []) {
   const grouped = new Map()
 
@@ -273,7 +317,6 @@ function aggregateSummaryMetrics(cpuRows = [], memoryRows = [], storageRows = []
         data: labels.map((label) => average(grouped.get(label)?.cpu || [])),
         borderColor: '#2563eb',
         backgroundColor: 'rgba(37,99,235,0.08)',
-        yAxisID: 'percent',
         pointRadius: 0,
         tension: 0.32,
         borderWidth: 2,
@@ -283,7 +326,6 @@ function aggregateSummaryMetrics(cpuRows = [], memoryRows = [], storageRows = []
         data: labels.map((label) => average(grouped.get(label)?.memory || [])),
         borderColor: '#8b5cf6',
         backgroundColor: 'rgba(139,92,246,0.08)',
-        yAxisID: 'percent',
         pointRadius: 0,
         tension: 0.32,
         borderWidth: 2,
@@ -296,17 +338,18 @@ function aggregateSummaryMetrics(cpuRows = [], memoryRows = [], storageRows = []
         }),
         borderColor: '#f59e0b',
         backgroundColor: 'rgba(245,158,11,0.08)',
-        yAxisID: 'percent',
         pointRadius: 0,
         tension: 0.32,
         borderWidth: 2,
       },
       {
         label: 'Power kW',
-        data: labels.map((label) => Number(((grouped.get(label)?.power || []).reduce((sum, value) => sum + value, 0)).toFixed(3))),
+        data: labels.map((label) => {
+          const vals = grouped.get(label)?.power || []
+          return vals.length ? Number((vals.reduce((sum, v) => sum + v, 0)).toFixed(3)) : null
+        }),
         borderColor: '#16a34a',
         backgroundColor: 'rgba(22,163,74,0.08)',
-        yAxisID: 'power',
         pointRadius: 0,
         tension: 0.32,
         borderWidth: 2,
@@ -390,26 +433,38 @@ const iloOptions = {
   },
 }
 
-const summaryOptions = {
-  ...lineOptions,
-  scales: {
-    x: lineOptions.scales.x,
-    percent: {
-      type: 'linear',
-      position: 'left',
-      beginAtZero: true,
-      max: 100,
-      grid: { color: 'rgba(148,163,184,0.16)' },
-      ticks: { color: '#64748b' },
+const getDynamicSummaryOptions = (metric) => {
+  const isPercent = ['cpu', 'memory', 'storage'].includes(metric)
+  return {
+    ...lineOptions,
+    scales: {
+      x: lineOptions.scales.x,
+      y: {
+        beginAtZero: true,
+        ...(isPercent ? { max: 100 } : {}),
+        grid: { color: 'rgba(148,163,184,0.16)' },
+        ticks: { color: '#64748b' },
+      },
     },
-    power: {
-      type: 'linear',
-      position: 'right',
-      beginAtZero: true,
-      grid: { display: false },
-      ticks: { color: '#64748b' },
+  }
+}
+
+function getSummaryOptions(metric) {
+  const isPercent = metric !== 'power'
+  return {
+    ...lineOptions,
+    scales: {
+      x: lineOptions.scales.x,
+      y: {
+        type: 'linear',
+        position: 'left',
+        beginAtZero: true,
+        max: isPercent ? 100 : undefined,
+        grid: { color: 'rgba(148,163,184,0.16)' },
+        ticks: { color: '#64748b' },
+      },
     },
-  },
+  }
 }
 
 export default function SuperAdminPage() {
@@ -423,33 +478,39 @@ export default function SuperAdminPage() {
     ilo: '',
   })
   const [summaryMetric, setSummaryMetric] = useState('cpu')
-  const [headerSummaryRange, setHeaderSummaryRange] = useState('24h')
-  const [cpuRange, setCpuRange] = useState('24h')
-  const [memoryRange, setMemoryRange] = useState('24h')
-  const [storageRange, setStorageRange] = useState('24h')
-  const [powerRange, setPowerRange] = useState('24h')
-  const [analyticsRange, setAnalyticsRange] = useState('24h')
-  const [iloRange, setIloRange] = useState('24h')
-  const [networkRange, setNetworkRange] = useState('24h')
+  const [panelRanges, setPanelRanges] = useState({
+    summary: { range: '24h', customFrom: '', customTo: '' },
+    cpu: { range: '24h', customFrom: '', customTo: '' },
+    memory: { range: '24h', customFrom: '', customTo: '' },
+    storage: { range: '24h', customFrom: '', customTo: '' },
+    power: { range: '24h', customFrom: '', customTo: '' },
+    analytics: { range: '24h', customFrom: '', customTo: '' },
+    ilo: { range: '24h', customFrom: '', customTo: '' },
+    network: { range: '24h', customFrom: '', customTo: '' },
+  })
   const [detailsState, setDetailsState] = useState({
     open: false,
     section: 'cpu',
     range: '24h',
+    customFrom: '',
+    customTo: '',
     sort: 'desc',
     page: 1,
   })
 
   const dashboardSnapshot = useSuperAdminDashboardSnapshot()
-  const analyticsBundle = useSuperAdminBundleData({ range: analyticsRange, hostId: sectionHosts.analytics })
-  const cpuData = useSuperAdminSectionData({ section: 'cpu', range: cpuRange, hostId: sectionHosts.cpu })
-  const memoryData = useSuperAdminSectionData({ section: 'memory', range: memoryRange, hostId: sectionHosts.memory })
-  const storageData = useSuperAdminSectionData({ section: 'storage', range: storageRange })
-  const powerData = useSuperAdminSectionData({ section: 'power', range: powerRange, hostId: sectionHosts.power })
-  const iloData = useSuperAdminSectionData({ section: 'ilo', range: iloRange, hostId: sectionHosts.ilo })
-  const networkData = useSuperAdminSectionData({ section: 'network', range: networkRange })
+  const analyticsBundle = useSuperAdminBundleData({ range: panelRanges.analytics.range, customFrom: panelRanges.analytics.customFrom, customTo: panelRanges.analytics.customTo, hostId: sectionHosts.analytics })
+  const cpuData = useSuperAdminSectionData({ section: 'cpu', range: panelRanges.cpu.range, customFrom: panelRanges.cpu.customFrom, customTo: panelRanges.cpu.customTo, hostId: sectionHosts.cpu })
+  const memoryData = useSuperAdminSectionData({ section: 'memory', range: panelRanges.memory.range, customFrom: panelRanges.memory.customFrom, customTo: panelRanges.memory.customTo, hostId: sectionHosts.memory })
+  const storageData = useSuperAdminSectionData({ section: 'storage', range: panelRanges.storage.range, customFrom: panelRanges.storage.customFrom, customTo: panelRanges.storage.customTo })
+  const powerData = useSuperAdminSectionData({ section: 'power', range: panelRanges.power.range, customFrom: panelRanges.power.customFrom, customTo: panelRanges.power.customTo, hostId: sectionHosts.power })
+  const iloData = useSuperAdminSectionData({ section: 'ilo', range: panelRanges.ilo.range, customFrom: panelRanges.ilo.customFrom, customTo: panelRanges.ilo.customTo, hostId: sectionHosts.ilo })
+  const networkData = useSuperAdminSectionData({ section: 'network', range: panelRanges.network.range, customFrom: panelRanges.network.customFrom, customTo: panelRanges.network.customTo })
   const detailsData = useSuperAdminSectionData({
     section: detailsState.section,
     range: detailsState.range,
+    customFrom: detailsState.customFrom,
+    customTo: detailsState.customTo,
     hostId: detailsState.hostId,
     page: detailsState.page,
     pageSize: 50,
@@ -459,7 +520,9 @@ export default function SuperAdminPage() {
   // Dedicated data fetch for Header Summary to decouple it from the panels below
   const summaryDedicatedData = useSuperAdminSectionData({
     section: summaryMetric,
-    range: headerSummaryRange,
+    range: panelRanges.summary.range,
+    customFrom: panelRanges.summary.customFrom,
+    customTo: panelRanges.summary.customTo,
     hostId: summaryMetric === 'storage' ? '' : sectionHosts.summary
   })
 
@@ -473,6 +536,16 @@ export default function SuperAdminPage() {
     const rows = summaryDedicatedData.data?.rows || []
     if (!rows.length) return { labels: [], datasets: [] }
     
+    const isCpuRows = rows.length > 0 && ('cpuUsagePct' in rows[0] || 'cpu_usage_pct' in rows[0])
+    const isMemRows = rows.length > 0 && ('memoryUsagePct' in rows[0] || 'memory_usage_pct' in rows[0])
+    const isStoreRows = rows.length > 0 && ('usedSpaceGb' in rows[0] || 'used_space_gb' in rows[0])
+    const isPowerRows = rows.length > 0 && ('powerKw' in rows[0] || 'power_kw' in rows[0])
+
+    if (summaryMetric === 'cpu' && !isCpuRows) return { labels: [], datasets: [] }
+    if (summaryMetric === 'memory' && !isMemRows) return { labels: [], datasets: [] }
+    if (summaryMetric === 'storage' && !isStoreRows) return { labels: [], datasets: [] }
+    if (summaryMetric === 'power' && !isPowerRows) return { labels: [], datasets: [] }
+
     // We reuse group/aggregate mechanics to build the single selected metric
     const mockCpu = summaryMetric === 'cpu' ? rows.map(r => ({ ts: r.timestamp, cpuUsagePct: r.cpuUsagePct })) : []
     const mockMem = summaryMetric === 'memory' ? rows.map(r => ({ ts: r.timestamp, memoryUsagePct: r.memoryUsagePct })) : []
@@ -484,35 +557,7 @@ export default function SuperAdminPage() {
   })()
 
   const vmLifecycle = analyticsBundle.data?.charts?.vmLifecycle || []
-  const vmLifecycleChart = {
-    labels: vmLifecycle.map((row) => row.statDate),
-    datasets: [
-      {
-        type: 'bar',
-        label: 'Created',
-        data: vmLifecycle.map((row) => row.createdCount),
-        backgroundColor: 'rgba(37,99,235,0.78)',
-        borderRadius: 8,
-      },
-      {
-        type: 'bar',
-        label: 'Deleted',
-        data: vmLifecycle.map((row) => row.deletedCount),
-        backgroundColor: 'rgba(239,68,68,0.72)',
-        borderRadius: 8,
-      },
-      {
-        type: 'line',
-        label: 'Running',
-        data: vmLifecycle.map((row) => row.runningCount),
-        borderColor: '#16a34a',
-        backgroundColor: 'rgba(22,163,74,0.12)',
-        tension: 0.3,
-        pointRadius: 2,
-        borderWidth: 2,
-      },
-    ],
-  }
+  const vmLifecycleChart = aggregateVmLifecycle(vmLifecycle)
 
   const summaryGraphError = cpuData.error || memoryData.error || storageData.error || powerData.error
   const pageLoading = dashboardSnapshot.loading && !dashboardSnapshot.data
@@ -529,11 +574,26 @@ export default function SuperAdminPage() {
     setSectionHosts((current) => ({ ...current, [section]: hostId }))
   }
 
-  function openDetails(section, range, hostId = '') {
+  function handleRangeChange(section, range) {
+    setPanelRanges((prev) => ({ ...prev, [section]: { ...prev[section], range } }))
+  }
+
+  function handleCustomDateChange(section, customFrom, customTo) {
+    setPanelRanges((prev) => ({ ...prev, [section]: { ...prev[section], customFrom, customTo } }))
+  }
+
+  function openDetails(section, rangeSpec, hostId = '') {
+    // Determine if rangeSpec is a string (like cpuRange was) or an object (like panelRanges.cpu)
+    const rangeVal = typeof rangeSpec === 'object' ? rangeSpec.range : rangeSpec
+    const customFromVal = typeof rangeSpec === 'object' ? rangeSpec.customFrom : ''
+    const customToVal = typeof rangeSpec === 'object' ? rangeSpec.customTo : ''
+
     setDetailsState({
       open: true,
       section,
-      range,
+      range: rangeVal,
+      customFrom: customFromVal,
+      customTo: customToVal,
       hostId,
       sort: 'desc',
       page: 1,
@@ -580,8 +640,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Header Summary"
             subtitle="Historical summary trends from database snapshots"
-            range={headerSummaryRange}
-            onRangeChange={setHeaderSummaryRange}
+            range={panelRanges.summary.range}
+            customFrom={panelRanges.summary.customFrom}
+            customTo={panelRanges.summary.customTo}
+            onRangeChange={(range) => handleRangeChange('summary', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('summary', f, t)}
             hostId={sectionHosts.summary}
             onHostChange={(value) => setSectionHost('summary', value)}
             hostOptions={hostOptions}
@@ -609,7 +672,7 @@ export default function SuperAdminPage() {
 
                 <button
                   type="button"
-                  onClick={() => openDetails(summaryMetric, headerSummaryRange, getSummaryMetricHostId(summaryMetric, sectionHosts.summary))}
+                  onClick={() => openDetails(summaryMetric, panelRanges.summary, getSummaryMetricHostId(summaryMetric, sectionHosts.summary))}
                   className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700"
                 >
                   Open Detailed Records
@@ -618,15 +681,18 @@ export default function SuperAdminPage() {
             }
           >
             <div className="h-[320px]">
-              <Line key={summaryMetric} data={summaryFilteredChart} options={summaryOptions} />
+              <Line key={summaryMetric} data={summaryFilteredChart} options={getSummaryOptions(summaryMetric)} />
             </div>
           </SuperAdminHistoricalPanel>
 
           <SuperAdminHistoricalPanel
             title="CPU & Processor Metrics"
             subtitle="CPU usage trend by host from database snapshots"
-            range={cpuRange}
-            onRangeChange={setCpuRange}
+            range={panelRanges.cpu.range}
+            customFrom={panelRanges.cpu.customFrom}
+            customTo={panelRanges.cpu.customTo}
+            onRangeChange={(range) => handleRangeChange('cpu', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('cpu', f, t)}
             hostId={sectionHosts.cpu}
             onHostChange={(value) => setSectionHost('cpu', value)}
             hostOptions={hostOptions}
@@ -639,7 +705,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   Latest processors tracked: <span className="font-bold text-slate-700">{latestCpuRows.length || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('cpu', cpuRange, sectionHosts.cpu)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('cpu', panelRanges.cpu, sectionHosts.cpu)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -653,8 +719,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Memory Statistics"
             subtitle="Memory usage trend by host from database snapshots"
-            range={memoryRange}
-            onRangeChange={setMemoryRange}
+            range={panelRanges.memory.range}
+            customFrom={panelRanges.memory.customFrom}
+            customTo={panelRanges.memory.customTo}
+            onRangeChange={(range) => handleRangeChange('memory', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('memory', f, t)}
             hostId={sectionHosts.memory}
             onHostChange={(value) => setSectionHost('memory', value)}
             hostOptions={hostOptions}
@@ -667,7 +736,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   Latest hosts with memory data: <span className="font-bold text-slate-700">{latestMemoryRows.length || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('memory', memoryRange, sectionHosts.memory)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('memory', panelRanges.memory, sectionHosts.memory)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -681,8 +750,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Storage Management"
             subtitle="Aggregated datastore usage from DB snapshots"
-            range={storageRange}
-            onRangeChange={setStorageRange}
+            range={panelRanges.storage.range}
+            customFrom={panelRanges.storage.customFrom}
+            customTo={panelRanges.storage.customTo}
+            onRangeChange={(range) => handleRangeChange('storage', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('storage', f, t)}
             loading={storageData.loading}
             error={storageData.error}
             empty={!storageData.data?.rows?.length}
@@ -692,7 +764,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   Datastore rows captured: <span className="font-bold text-slate-700">{storageData.data?.total || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('storage', storageRange)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('storage', panelRanges.storage)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -706,8 +778,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Power Consumption"
             subtitle="Power draw trend stored every 2 minutes"
-            range={powerRange}
-            onRangeChange={setPowerRange}
+            range={panelRanges.power.range}
+            customFrom={panelRanges.power.customFrom}
+            customTo={panelRanges.power.customTo}
+            onRangeChange={(range) => handleRangeChange('power', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('power', f, t)}
             hostId={sectionHosts.power}
             onHostChange={(value) => setSectionHost('power', value)}
             hostOptions={hostOptions}
@@ -720,7 +795,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   Latest power records: <span className="font-bold text-slate-700">{powerData.data?.total || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('power', powerRange, sectionHosts.power)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('power', panelRanges.power, sectionHosts.power)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -734,8 +809,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Historical Analytics"
             subtitle="VM lifecycle trends from historical DB events"
-            range={analyticsRange}
-            onRangeChange={setAnalyticsRange}
+            range={panelRanges.analytics.range}
+            customFrom={panelRanges.analytics.customFrom}
+            customTo={panelRanges.analytics.customTo}
+            onRangeChange={(range) => handleRangeChange('analytics', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('analytics', f, t)}
             hostId={sectionHosts.analytics}
             onHostChange={(value) => setSectionHost('analytics', value)}
             hostOptions={hostOptions}
@@ -748,7 +826,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   VM lifecycle points: <span className="font-bold text-slate-700">{vmLifecycle.length || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('vm', analyticsRange, sectionHosts.analytics)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('vm', panelRanges.analytics, sectionHosts.analytics)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -762,8 +840,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="iLO Hardware Monitor"
             subtitle="Stored iLO temperatures, health, and power over time"
-            range={iloRange}
-            onRangeChange={setIloRange}
+            range={panelRanges.ilo.range}
+            customFrom={panelRanges.ilo.customFrom}
+            customTo={panelRanges.ilo.customTo}
+            onRangeChange={(range) => handleRangeChange('ilo', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('ilo', f, t)}
             hostId={sectionHosts.ilo}
             onHostChange={(value) => setSectionHost('ilo', value)}
             hostOptions={hostOptions}
@@ -779,7 +860,7 @@ export default function SuperAdminPage() {
                     Health: <strong className="text-slate-700">{latestIloRows[0]?.health || 'Unknown'}</strong>
                   </span>
                 </div>
-                <button type="button" onClick={() => openDetails('ilo', iloRange, sectionHosts.ilo)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('ilo', panelRanges.ilo, sectionHosts.ilo)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -793,8 +874,11 @@ export default function SuperAdminPage() {
           <SuperAdminHistoricalPanel
             title="Individual Server Network Performance"
             subtitle="Network snapshot history captured in the database"
-            range={networkRange}
-            onRangeChange={setNetworkRange}
+            range={panelRanges.network.range}
+            customFrom={panelRanges.network.customFrom}
+            customTo={panelRanges.network.customTo}
+            onRangeChange={(range) => handleRangeChange('network', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('network', f, t)}
             loading={networkData.loading}
             error={networkData.error}
             empty={!networkData.data?.rows?.length}
@@ -804,7 +888,7 @@ export default function SuperAdminPage() {
                 <div className="text-sm text-slate-500">
                   Network rows captured: <span className="font-bold text-slate-700">{networkData.data?.total || 0}</span>
                 </div>
-                <button type="button" onClick={() => openDetails('network', networkRange)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                <button type="button" onClick={() => openDetails('network', panelRanges.network)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
                   Open Detailed Records
                 </button>
               </div>
@@ -826,10 +910,13 @@ export default function SuperAdminPage() {
         error={detailsData.error}
         section={detailsState.section}
         range={detailsState.range}
+        customFrom={detailsState.customFrom}
+        customTo={detailsState.customTo}
         sort={detailsState.sort}
         page={detailsState.page}
         onClose={() => setDetailsState((current) => ({ ...current, open: false }))}
         onRangeChange={(range) => setDetailsState((current) => ({ ...current, range, page: 1 }))}
+        onCustomDateChange={(customFrom, customTo) => setDetailsState((current) => ({ ...current, customFrom, customTo, page: 1 }))}
         onSortChange={(sort) => setDetailsState((current) => ({ ...current, sort, page: 1 }))}
         onPageChange={(page) => setDetailsState((current) => ({ ...current, page }))}
       />

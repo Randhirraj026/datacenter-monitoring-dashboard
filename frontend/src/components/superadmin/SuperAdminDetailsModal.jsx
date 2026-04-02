@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { exportRowsToCsv } from '../../services/superAdminApi'
 
 const RANGE_OPTIONS = [
@@ -7,6 +7,7 @@ const RANGE_OPTIONS = [
   { value: '6h', label: 'Last 6 Hr' },
   { value: '24h', label: 'Last 24 Hr' },
   { value: '7d', label: 'Last 7 Days' },
+  { value: 'custom', label: 'Custom Range' },
 ]
 
 function formatCellValue(key, value) {
@@ -33,13 +34,18 @@ export default function SuperAdminDetailsModal({
   error,
   section,
   range,
+  customFrom,
+  customTo,
   sort,
   page,
   onClose,
   onRangeChange,
+  onCustomDateChange,
   onSortChange,
   onPageChange,
 }) {
+  const [showCustomPicker, setShowCustomPicker] = useState(false)
+
   useEffect(() => {
     if (!open) return undefined
 
@@ -78,7 +84,15 @@ export default function SuperAdminDetailsModal({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <select
               value={range}
-              onChange={(event) => onRangeChange(event.target.value)}
+              onChange={(event) => {
+                const val = event.target.value
+                onRangeChange(val)
+                if (val === 'custom') {
+                  setShowCustomPicker(true)
+                } else {
+                  setShowCustomPicker(false)
+                }
+              }}
               className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             >
               {RANGE_OPTIONS.map((option) => (
@@ -87,6 +101,52 @@ export default function SuperAdminDetailsModal({
                 </option>
               ))}
             </select>
+
+            {range === 'custom' && (
+              <div className="relative flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPicker((prev) => !prev)}
+                  className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700 transition hover:bg-blue-100"
+                >
+                  {customFrom && customTo ? 'Dates Set' : 'Select Dates'}
+                </button>
+
+                {showCustomPicker && (
+                  <div className="absolute right-0 top-[calc(100%+8px)] z-[200] flex w-72 flex-col gap-4 rounded-3xl border border-slate-200/80 bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.15)] backdrop-blur-xl">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Custom Window</div>
+                    
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-slate-500">From:</label>
+                      <input
+                        type="datetime-local"
+                        value={customFrom || ''}
+                        onChange={(e) => onCustomDateChange?.(e.target.value, customTo)}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-slate-500">To:</label>
+                      <input
+                        type="datetime-local"
+                        value={customTo || ''}
+                        onChange={(e) => onCustomDateChange?.(customFrom, e.target.value)}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomPicker(false)}
+                      className="mt-1 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-700 shadow-sm"
+                    >
+                      Apply Filter
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <button
               type="button"

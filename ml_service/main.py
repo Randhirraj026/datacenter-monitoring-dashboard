@@ -39,10 +39,18 @@ def predict(host_id: int, metric: str, time_range: str = Query(..., alias="range
     cache_key = (host_id, metric, forecast_hours)
     if cache_key in cache:
         logger.info(f"Returning cached predictions for {cache_key}")
+        cached = cache[cache_key]
+        if isinstance(cached, dict) and "predictions" in cached:
+            return {
+                "metric": metric,
+                "range": time_range,
+                "predictions": cached["predictions"],
+                "metrics": cached.get("metrics", {})
+            }
         return {
             "metric": metric,
             "range": time_range,
-            "predictions": cache[cache_key]
+            "predictions": cached
         }
         
     logger.info(f"Training and predicting for {cache_key}")
@@ -79,14 +87,21 @@ def predict(host_id: int, metric: str, time_range: str = Query(..., alias="range
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         
         # Run prediction
-        predictions = train_and_predict_lstm(df, metric, forecast_hours)
+        predictions_data = train_and_predict_lstm(df, metric, forecast_hours)
         
-        cache[cache_key] = predictions
+        cache[cache_key] = predictions_data
         
+        if isinstance(predictions_data, dict) and "predictions" in predictions_data:
+            return {
+                "metric": metric,
+                "range": time_range,
+                "predictions": predictions_data["predictions"],
+                "metrics": predictions_data.get("metrics", {})
+            }
         return {
             "metric": metric,
             "range": time_range,
-            "predictions": predictions
+            "predictions": predictions_data
         }
 
     except Exception as e:

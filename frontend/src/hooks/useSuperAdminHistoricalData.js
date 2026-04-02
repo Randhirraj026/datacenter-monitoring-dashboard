@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchSuperAdminBundleFromDb, fetchSuperAdminDashboard, fetchSuperAdminDetails } from '../services/superAdminApi'
 
-export function useSuperAdminBundleData({ range = '24h', hostId = '' } = {}) {
+  export function useSuperAdminBundleData({ range = '24h', hostId = '', customFrom, customTo } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -14,8 +14,8 @@ export function useSuperAdminBundleData({ range = '24h', hostId = '' } = {}) {
       setError('')
 
       try {
-        const response = await fetchSuperAdminBundleFromDb({ range, hostId: hostId || undefined })
-        console.debug('[SuperAdmin][bundle]', { range, hostId, ok: !!response })
+        const response = await fetchSuperAdminBundleFromDb({ range, hostId: hostId || undefined, customFrom, customTo })
+        console.debug('[SuperAdmin][bundle]', { range, hostId, customFrom, customTo, ok: !!response })
 
         if (cancelled) return
         if (!response) {
@@ -42,12 +42,12 @@ export function useSuperAdminBundleData({ range = '24h', hostId = '' } = {}) {
       cancelled = true
       clearInterval(intervalId)
     }
-  }, [hostId, range])
+  }, [hostId, range, customFrom, customTo])
 
   return { data, loading, error }
 }
 
-export function useSuperAdminSectionData({ section, range = '24h', hostId = '', page = 1, pageSize = 500, sort = 'asc' } = {}) {
+export function useSuperAdminSectionData({ section, range = '24h', hostId = '', page = 1, pageSize = 500, sort = 'asc', customFrom, customTo } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -69,9 +69,11 @@ export function useSuperAdminSectionData({ section, range = '24h', hostId = '', 
           page,
           pageSize,
           sort,
+          customFrom,
+          customTo
         })
 
-        console.debug(`[SuperAdmin][${section}]`, { range, hostId, page, sort, ok: !!response, total: response?.total || 0 })
+        console.debug(`[SuperAdmin][${section}]`, { range, hostId, page, sort, customFrom, customTo, ok: !!response, total: response?.total || 0 })
 
         if (cancelled) return
         if (!response) {
@@ -98,7 +100,7 @@ export function useSuperAdminSectionData({ section, range = '24h', hostId = '', 
       cancelled = true
       clearInterval(intervalId)
     }
-  }, [hostId, page, pageSize, range, section, sort])
+  }, [hostId, page, pageSize, range, section, sort, customFrom, customTo])
 
   return { data, loading, error }
 }

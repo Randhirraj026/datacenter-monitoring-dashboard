@@ -337,7 +337,7 @@ export async function fetchSuperAdminBundle(filters = {}) {
   })
 
   const liveBundle = await apiGet(`/superadmin/bundle${query}`)
-  return liveBundle || generateMockBundle(filters)
+  return liveBundle
 }
 
 export async function fetchSuperAdminBundleFromDb(filters = {}) {
@@ -498,10 +498,7 @@ export async function fetchSuperAdminDetails(filters = {}) {
   })
 
   const liveDetails = await apiGet(`/superadmin/details${query}`)
-  if (liveDetails) return liveDetails
-
-  const fallbackBundle = await fetchSuperAdminBundle({ range: filters.range, hostId: filters.hostId })
-  return buildFallbackDetailsFromBundle(fallbackBundle, filters)
+  return liveDetails
 }
 
 export function exportRowsToCsv(filename, rows) {

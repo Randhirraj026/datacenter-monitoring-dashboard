@@ -43,6 +43,7 @@ This acts as the main proxy and data synchronization pipeline.
 cd backend
 npm install
 ```
+
 Create a `.env` file in `backend/.env` with your secure credentials:
 ```env
 PORT=3000
