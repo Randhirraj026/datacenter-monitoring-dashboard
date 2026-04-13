@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chart, registerables } from 'chart.js'
 import DashCard, { CardHeader, StatItem } from '../ui/DashCard'
 import Badge, { getBadgeVariant } from '../ui/Badge'
@@ -36,6 +36,7 @@ export default function StorageSection({ data = {}, getHistoryRange, setHistoryR
   const historyRows = data.history?.datastoreUsage || []
   const chartRange = getHistoryRange?.('storage_chart') || '7d'
   const arrayRange = getHistoryRange?.('storage_arrays') || '7d'
+  const [staticChartRows, setStaticChartRows] = useState([])
 
   const chartRows = useMemo(() => {
     if (!historyRows.length) return (data.datastores || []).map(normalizeDatastore)
@@ -47,12 +48,18 @@ export default function StorageSection({ data = {}, getHistoryRange, setHistoryR
   }, [arrayRange, data.datastores, historyRows])
 
   useEffect(() => {
+    if (staticChartRows.length === 0 && chartRows.length > 0) {
+      setStaticChartRows(chartRows)
+    }
+  }, [chartRows, staticChartRows.length])
+
+  useEffect(() => {
     const ctx = storageChartRef.current
     if (!ctx) return undefined
 
-    const labels = chartRows.map((row) => row.name)
-    const usedData = chartRows.map((row) => row.usedGB)
-    const freeData = chartRows.map((row) => row.freeGB)
+    const labels = staticChartRows.map((row) => row.name)
+    const usedData = staticChartRows.map((row) => row.usedGB)
+    const freeData = staticChartRows.map((row) => row.freeGB)
 
     if (storageChartInst.current) {
       storageChartInst.current.data.labels = labels
@@ -86,7 +93,7 @@ export default function StorageSection({ data = {}, getHistoryRange, setHistoryR
       storageChartInst.current?.destroy()
       storageChartInst.current = null
     }
-  }, [chartRows])
+  }, [staticChartRows])
 
   const totalGB = arrayRows.reduce((sum, row) => sum + row.totalGB, 0)
   const usedGB = arrayRows.reduce((sum, row) => sum + row.usedGB, 0)
@@ -108,7 +115,7 @@ export default function StorageSection({ data = {}, getHistoryRange, setHistoryR
             badge={<Badge variant={badgeVariant}>{badgeLabel}</Badge>}
           />
           <div className="chart-wrap mt-5 min-h-[300px] flex-1">
-            {chartRows.length === 0 ? (
+            {staticChartRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-gray-400">No datastore data available</div>
             ) : (
               <canvas ref={storageChartRef} />

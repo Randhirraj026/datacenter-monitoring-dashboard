@@ -1,8 +1,11 @@
 // ── API base URL ────────────────────────────────────────────────
-export const API = 'http://localhost:3000/api'   // DEV
-// export const API = '/api'                      // PROD
+const devHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000'
+  : `${window.location.protocol}//${window.location.hostname}:3000`
 
-export const POLL_INTERVAL_MS = 10_000
+export const API = `${devHost}/api`
+
+export const POLL_INTERVAL_MS = 5_000
 
 export const MAX_POWER_HISTORY = 24
 

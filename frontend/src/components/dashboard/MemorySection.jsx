@@ -148,7 +148,13 @@ function MemoryVmModal({ title, items = [], isOpen, onClose }) {
 export default function MemorySection({ data = {} }) {
   const vmChartRef = useRef(null)
   const vmChartInst = useRef(null)
-  const [modalState, setModalState] = useState({ isOpen: false, title: '', items: [] })
+  const [modalState, setModalState] = useState({
+    isOpen: false,
+    title: '',
+    mode: null,
+    hostLabel: null,
+    vmState: null,
+  })
 
   const memPct = data.memPct ?? 0
   const memUsed = data.memUsed ?? 0
@@ -199,6 +205,21 @@ export default function MemorySection({ data = {} }) {
       memUsedGB: host.memUsedGB ?? null,
     }))
   }, [data.allVMs, data.hosts])
+
+  const modalItems = useMemo(() => {
+    if (!modalState.isOpen) return []
+
+    if (modalState.mode === 'state') {
+      return (data.allVMs || []).filter((vm) => normalizeVmState(vm) === modalState.vmState)
+    }
+
+    if (modalState.mode === 'host') {
+      const matchingRow = hostVmRows.find((row) => row.label === modalState.hostLabel)
+      return matchingRow?.all || []
+    }
+
+    return []
+  }, [data.allVMs, hostVmRows, modalState])
 
   useEffect(() => {
     const ctx = vmChartRef.current
@@ -273,8 +294,14 @@ export default function MemorySection({ data = {} }) {
     }
   }, [vmRunning, vmStopped, vmSuspended])
 
-  const openVmModal = (title, items) => {
-    setModalState({ isOpen: true, title, items })
+  const openVmModal = (nextState) => {
+    setModalState({
+      isOpen: true,
+      title: nextState.title,
+      mode: nextState.mode,
+      hostLabel: nextState.hostLabel ?? null,
+      vmState: nextState.vmState ?? null,
+    })
   }
 
   return (
@@ -337,7 +364,7 @@ export default function MemorySection({ data = {} }) {
 
             <button
               type="button"
-              onClick={() => openVmModal('Running VMs', (data.allVMs || []).filter((vm) => normalizeVmState(vm) === 'running'))}
+              onClick={() => openVmModal({ title: 'Running VMs', mode: 'state', vmState: 'running' })}
               className="block w-full rounded-2xl border border-emerald-100 bg-[linear-gradient(135deg,rgba(240,253,244,0.95),rgba(255,255,255,0.98))] px-4 py-2.5 text-left shadow-[0_12px_30px_rgba(16,185,129,0.08)] transition hover:-translate-y-0.5 hover:border-emerald-200"
             >
               <div className="flex items-center justify-between gap-4 text-gray-600">
@@ -357,7 +384,7 @@ export default function MemorySection({ data = {} }) {
 
             <button
               type="button"
-              onClick={() => openVmModal('Stopped VMs', (data.allVMs || []).filter((vm) => normalizeVmState(vm) === 'stopped'))}
+              onClick={() => openVmModal({ title: 'Stopped VMs', mode: 'state', vmState: 'stopped' })}
               className="mt-3 block w-full rounded-2xl border border-rose-100 bg-[linear-gradient(135deg,rgba(255,241,242,0.95),rgba(255,255,255,0.98))] px-4 py-2.5 text-left shadow-[0_12px_30px_rgba(244,63,94,0.08)] transition hover:-translate-y-0.5 hover:border-rose-200"
             >
               <div className="flex items-center justify-between gap-4 text-gray-600">
@@ -390,7 +417,7 @@ export default function MemorySection({ data = {} }) {
                   <button
                     key={`${row.label}-${index}`}
                     type="button"
-                    onClick={() => openVmModal(`${row.label} VMs`, row.all)}
+                    onClick={() => openVmModal({ title: `${row.label} VMs`, mode: 'host', hostLabel: row.label })}
                     className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-[linear-gradient(135deg,#ffffff,#f8fafc)] px-4 py-2 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
                   >
                     <div className="min-w-0 flex-1">
@@ -426,9 +453,9 @@ export default function MemorySection({ data = {} }) {
 
       <MemoryVmModal
         title={modalState.title}
-        items={modalState.items}
+        items={modalItems}
         isOpen={modalState.isOpen}
-        onClose={() => setModalState({ isOpen: false, title: '', items: [] })}
+        onClose={() => setModalState({ isOpen: false, title: '', mode: null, hostLabel: null, vmState: null })}
       />
     </section>
   )

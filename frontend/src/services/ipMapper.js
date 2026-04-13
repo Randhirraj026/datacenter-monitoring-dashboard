@@ -32,12 +32,22 @@ export function getOriginalIp(displayName) {
 export function isGenericServerLabel(name) {
   if (!name) return true
   const n = String(name).trim().toLowerCase()
-  return /^server\s*\d+$/.test(n) || /^ilo[\s_-]*\d*$/.test(n)
+  return /^server\s*\d+$/.test(n)
+    || /^ilo[\s_-]*\d*$/.test(n)
+    || /^computer\s*system$/.test(n)
+    || /^system$/.test(n)
+    || /^host\s*system$/.test(n)
 }
 
 export function getServerDisplayName(server, idx, allHosts = []) {
   const mappedIloIp = mapIpName(server?.ip || '')
   if (mappedIloIp && mappedIloIp !== (server?.ip || '')) return mappedIloIp
+
+  const hostMatch = Array.isArray(allHosts)
+    ? allHosts.find((host) => String(host.hostId || host.id) === String(server?.hostId))
+    : null
+  const hostName = mapIpName(hostMatch?.name || '')
+  if (hostName) return hostName
 
   const iloName = mapIpName(server?.serverName || '')
   if (iloName && !isGenericServerLabel(iloName)) return iloName

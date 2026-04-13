@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { exportRowsToCsv } from '../../services/superAdminApi'
+import { mapIpName } from '../../services/ipMapper'
 
 const RANGE_OPTIONS = [
   { value: '15m', label: 'Last 15 Min' },
@@ -24,6 +25,7 @@ function formatCellValue(key, value) {
 
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (value == null || value === '') return '-'
+  if (typeof value === 'string') return mapIpName(value)
   return value
 }
 
@@ -56,6 +58,12 @@ export default function SuperAdminDetailsModal({
       document.body.style.overflow = previousOverflow
     }
   }, [open])
+
+  useEffect(() => {
+    if (range !== 'custom') {
+      setShowCustomPicker(false)
+    }
+  }, [range])
 
   if (!open) return null
 
@@ -177,7 +185,7 @@ export default function SuperAdminDetailsModal({
 
         <div className="flex items-center justify-between gap-4 border-b border-slate-100 bg-slate-50/70 px-6 py-3 text-sm text-slate-500">
           <div>{loading ? 'Loading records from DB...' : `${total} total records`}</div>
-          <div>Stored every 2 minutes</div>
+          <div>Stored every 5 minutes</div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">

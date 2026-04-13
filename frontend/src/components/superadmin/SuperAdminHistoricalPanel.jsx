@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export const SUPERADMIN_RANGE_OPTIONS = [
   { value: '15m', label: 'Last 15 Min' },
@@ -28,6 +28,12 @@ export default function SuperAdminHistoricalPanel({
   onCustomDateChange,
 }) {
   const [showCustomPicker, setShowCustomPicker] = useState(false)
+
+  useEffect(() => {
+    if (range !== 'custom') {
+      setShowCustomPicker(false)
+    }
+  }, [range])
 
   return (
     <section className="rounded-[30px] border border-slate-200/80 bg-white/92 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">

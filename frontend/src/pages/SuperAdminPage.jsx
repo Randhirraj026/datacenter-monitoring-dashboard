@@ -6,11 +6,14 @@ import BackgroundAnimation from '../components/ui/BackgroundAnimation'
 import LoadingOverlay from '../components/ui/LoadingOverlay'
 import StatusBadge from '../components/ui/StatusBadge'
 import Footer from '../components/layout/Footer'
+import RecentAlertsSection from '../components/dashboard/RecentAlertsSection'
 import SuperAdminHistoricalPanel from '../components/superadmin/SuperAdminHistoricalPanel'
 import SuperAdminDetailsModal from '../components/superadmin/SuperAdminDetailsModal'
 import PredictionPanel from '../components/superadmin/PredictionPanel'
+import AlertSettingsPanel from '../components/superadmin/AlertSettingsPanel'
 import { useSuperAdminBundleData, useSuperAdminDashboardSnapshot, useSuperAdminSectionData } from '../hooks/useSuperAdminHistoricalData'
 import { logout } from '../services/api'
+import { mapIpName } from '../services/ipMapper'
 
 Chart.register(...registerables)
 
@@ -205,6 +208,79 @@ function aggregateNetwork(rows = []) {
         pointRadius: 0,
         tension: 0.3,
         borderWidth: 2,
+      },
+    ],
+  }
+}
+
+function aggregateRdu(rows = []) {
+  const grouped = new Map()
+
+  rows.forEach((row) => {
+    grouped.set(row.timestamp, {
+      rackFrontTempC: row.rackFrontTempC != null ? Number(row.rackFrontTempC) : null,
+      rackRearTempC: row.rackRearTempC != null ? Number(row.rackRearTempC) : null,
+      humidityPct: row.humidityPct != null ? Number(row.humidityPct) : null,
+      upsBatteryPct: row.upsBatteryPct != null ? Number(row.upsBatteryPct) : null,
+      activeAlarmCount: row.activeAlarmCount != null ? Number(row.activeAlarmCount) : null,
+    })
+  })
+
+  const labels = Array.from(grouped.keys()).sort((a, b) => new Date(a) - new Date(b))
+
+  return {
+    labels: labels.map(formatTs),
+    datasets: [
+      {
+        label: 'Front Temp C',
+        data: labels.map((label) => grouped.get(label)?.rackFrontTempC ?? null),
+        borderColor: '#f97316',
+        backgroundColor: 'rgba(249,115,22,0.12)',
+        yAxisID: 'temp',
+        pointRadius: 0,
+        tension: 0.3,
+        borderWidth: 2,
+      },
+      {
+        label: 'Rear Temp C',
+        data: labels.map((label) => grouped.get(label)?.rackRearTempC ?? null),
+        borderColor: '#dc2626',
+        backgroundColor: 'rgba(220,38,38,0.12)',
+        yAxisID: 'temp',
+        pointRadius: 0,
+        tension: 0.3,
+        borderWidth: 2,
+      },
+      {
+        label: 'Humidity %',
+        data: labels.map((label) => grouped.get(label)?.humidityPct ?? null),
+        borderColor: '#0ea5e9',
+        backgroundColor: 'rgba(14,165,233,0.10)',
+        yAxisID: 'pct',
+        pointRadius: 0,
+        tension: 0.3,
+        borderWidth: 2,
+      },
+      {
+        label: 'Battery %',
+        data: labels.map((label) => grouped.get(label)?.upsBatteryPct ?? null),
+        borderColor: '#16a34a',
+        backgroundColor: 'rgba(22,163,74,0.10)',
+        yAxisID: 'pct',
+        pointRadius: 0,
+        tension: 0.3,
+        borderWidth: 2,
+      },
+      {
+        label: 'Alarm Count',
+        data: labels.map((label) => grouped.get(label)?.activeAlarmCount ?? null),
+        borderColor: '#7c3aed',
+        backgroundColor: 'rgba(124,58,237,0.08)',
+        yAxisID: 'alarm',
+        pointRadius: 0,
+        tension: 0.25,
+        borderWidth: 2,
+        borderDash: [5, 4],
       },
     ],
   }
@@ -433,6 +509,35 @@ const iloOptions = {
   },
 }
 
+const rduOptions = {
+  ...lineOptions,
+  scales: {
+    x: lineOptions.scales.x,
+    temp: {
+      type: 'linear',
+      position: 'left',
+      beginAtZero: true,
+      grid: { color: 'rgba(148,163,184,0.16)' },
+      ticks: { color: '#64748b' },
+    },
+    pct: {
+      type: 'linear',
+      position: 'right',
+      beginAtZero: true,
+      max: 100,
+      grid: { display: false },
+      ticks: { color: '#64748b' },
+    },
+    alarm: {
+      type: 'linear',
+      position: 'right',
+      beginAtZero: true,
+      grid: { display: false },
+      ticks: { color: '#64748b' },
+    },
+  },
+}
+
 const getDynamicSummaryOptions = (metric) => {
   const isPercent = ['cpu', 'memory', 'storage'].includes(metric)
   return {
@@ -467,6 +572,19 @@ function getSummaryOptions(metric) {
   }
 }
 
+function buildRangeState(current, range) {
+  if (range === 'custom') {
+    return { ...current, range }
+  }
+
+  return {
+    ...current,
+    range,
+    customFrom: '',
+    customTo: '',
+  }
+}
+
 export default function SuperAdminPage() {
   const navigate = useNavigate()
   const [sectionHosts, setSectionHosts] = useState({
@@ -484,6 +602,7 @@ export default function SuperAdminPage() {
     memory: { range: '24h', customFrom: '', customTo: '' },
     storage: { range: '24h', customFrom: '', customTo: '' },
     power: { range: '24h', customFrom: '', customTo: '' },
+    rdu: { range: '24h', customFrom: '', customTo: '' },
     analytics: { range: '24h', customFrom: '', customTo: '' },
     ilo: { range: '24h', customFrom: '', customTo: '' },
     network: { range: '24h', customFrom: '', customTo: '' },
@@ -504,6 +623,7 @@ export default function SuperAdminPage() {
   const memoryData = useSuperAdminSectionData({ section: 'memory', range: panelRanges.memory.range, customFrom: panelRanges.memory.customFrom, customTo: panelRanges.memory.customTo, hostId: sectionHosts.memory })
   const storageData = useSuperAdminSectionData({ section: 'storage', range: panelRanges.storage.range, customFrom: panelRanges.storage.customFrom, customTo: panelRanges.storage.customTo })
   const powerData = useSuperAdminSectionData({ section: 'power', range: panelRanges.power.range, customFrom: panelRanges.power.customFrom, customTo: panelRanges.power.customTo, hostId: sectionHosts.power })
+  const rduData = useSuperAdminSectionData({ section: 'rdu', range: panelRanges.rdu.range, customFrom: panelRanges.rdu.customFrom, customTo: panelRanges.rdu.customTo })
   const iloData = useSuperAdminSectionData({ section: 'ilo', range: panelRanges.ilo.range, customFrom: panelRanges.ilo.customFrom, customTo: panelRanges.ilo.customTo, hostId: sectionHosts.ilo })
   const networkData = useSuperAdminSectionData({ section: 'network', range: panelRanges.network.range, customFrom: panelRanges.network.customFrom, customTo: panelRanges.network.customTo })
   const detailsData = useSuperAdminSectionData({
@@ -526,10 +646,14 @@ export default function SuperAdminPage() {
     hostId: summaryMetric === 'storage' ? '' : sectionHosts.summary
   })
 
-  const hostOptions = dashboardSnapshot.data?.hosts?.map((host) => ({ id: host.hostId, name: host.name })) || []
+  const hostOptions = dashboardSnapshot.data?.hosts?.map((host) => ({ id: host.hostId, name: mapIpName(host.name) || host.name })) || []
   const latestCpuRows = latestByGroup(cpuData.data?.rows || [])
   const latestMemoryRows = latestByGroup(memoryData.data?.rows || [])
   const latestIloRows = latestByGroup(iloData.data?.rows || [], 'serverName')
+  const latestRduRow = useMemo(() => {
+    const rows = rduData.data?.rows || []
+    return rows.length ? [...rows].sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp))[0] : null
+  }, [rduData.data])
   
   // Build completely dedicated chart dataset for Header Summary
   const summaryFilteredChart = (() => {
@@ -575,11 +699,22 @@ export default function SuperAdminPage() {
   }
 
   function handleRangeChange(section, range) {
-    setPanelRanges((prev) => ({ ...prev, [section]: { ...prev[section], range } }))
+    setPanelRanges((prev) => ({
+      ...prev,
+      [section]: buildRangeState(prev[section], range),
+    }))
   }
 
   function handleCustomDateChange(section, customFrom, customTo) {
-    setPanelRanges((prev) => ({ ...prev, [section]: { ...prev[section], customFrom, customTo } }))
+    setPanelRanges((prev) => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        range: 'custom',
+        customFrom,
+        customTo,
+      },
+    }))
   }
 
   function openDetails(section, rangeSpec, hostId = '') {
@@ -635,6 +770,12 @@ export default function SuperAdminPage() {
         </section> */}
         
         <PredictionPanel hostOptions={hostOptions} />
+        <AlertSettingsPanel />
+        <RecentAlertsSection
+          alerts={dashboardSnapshot.data?.alerts || []}
+          title="Recent Alerts"
+          subtitle="Latest persisted VM lifecycle and infrastructure alerts from the database"
+        />
 
         <div className="grid gap-6 xl:grid-cols-2">
           <SuperAdminHistoricalPanel
@@ -712,7 +853,7 @@ export default function SuperAdminPage() {
             }
           >
             <div className="h-[320px]">
-              <Line data={buildGroupedLineData(cpuData.data?.rows || [], 'hostName', 'cpuUsagePct')} options={lineOptions} />
+              <Line data={buildGroupedLineData(cpuData.data?.rows || [], 'hostName', 'cpuUsagePct', mapIpName)} options={lineOptions} />
             </div>
           </SuperAdminHistoricalPanel>
 
@@ -743,7 +884,7 @@ export default function SuperAdminPage() {
             }
           >
             <div className="h-[320px]">
-              <Line data={buildGroupedLineData(memoryData.data?.rows || [], 'hostName', 'memoryUsagePct')} options={lineOptions} />
+              <Line data={buildGroupedLineData(memoryData.data?.rows || [], 'hostName', 'memoryUsagePct', mapIpName)} options={lineOptions} />
             </div>
           </SuperAdminHistoricalPanel>
 
@@ -777,7 +918,7 @@ export default function SuperAdminPage() {
 
           <SuperAdminHistoricalPanel
             title="Power Consumption"
-            subtitle="Power draw trend stored every 2 minutes"
+            subtitle="Power draw trend stored every 5 minutes"
             range={panelRanges.power.range}
             customFrom={panelRanges.power.customFrom}
             customTo={panelRanges.power.customTo}
@@ -803,6 +944,36 @@ export default function SuperAdminPage() {
           >
             <div className="h-[320px]">
               <Line data={aggregatePower(powerData.data?.rows || [])} options={lineOptions} />
+            </div>
+          </SuperAdminHistoricalPanel>
+
+          <SuperAdminHistoricalPanel
+            title="Vertiv RDU Monitor"
+            subtitle="Rack environment and UPS data loaded from stored DB snapshots"
+            range={panelRanges.rdu.range}
+            customFrom={panelRanges.rdu.customFrom}
+            customTo={panelRanges.rdu.customTo}
+            onRangeChange={(range) => handleRangeChange('rdu', range)}
+            onCustomDateChange={(f, t) => handleCustomDateChange('rdu', f, t)}
+            loading={rduData.loading}
+            error={rduData.error}
+            empty={!rduData.data?.rows?.length}
+            emptyText="No Vertiv RDU records found in the selected DB window."
+            footer={
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-3 text-sm text-slate-500">
+                  <span>Snapshots: <strong className="text-slate-700">{rduData.data?.total || 0}</strong></span>
+                  <span>RDU Status: <strong className="text-slate-700">{latestRduRow?.rduStatus || 'Unknown'}</strong></span>
+                  <span>Alarms: <strong className="text-slate-700">{latestRduRow?.activeAlarmCount ?? 0}</strong></span>
+                </div>
+                <button type="button" onClick={() => openDetails('rdu', panelRanges.rdu)} className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700">
+                  Open Detailed Records
+                </button>
+              </div>
+            }
+          >
+            <div className="h-[320px]">
+              <Line data={aggregateRdu(rduData.data?.rows || [])} options={rduOptions} />
             </div>
           </SuperAdminHistoricalPanel>
 
@@ -915,8 +1086,21 @@ export default function SuperAdminPage() {
         sort={detailsState.sort}
         page={detailsState.page}
         onClose={() => setDetailsState((current) => ({ ...current, open: false }))}
-        onRangeChange={(range) => setDetailsState((current) => ({ ...current, range, page: 1 }))}
-        onCustomDateChange={(customFrom, customTo) => setDetailsState((current) => ({ ...current, customFrom, customTo, page: 1 }))}
+        onRangeChange={(range) =>
+          setDetailsState((current) => ({
+            ...buildRangeState(current, range),
+            page: 1,
+          }))
+        }
+        onCustomDateChange={(customFrom, customTo) =>
+          setDetailsState((current) => ({
+            ...current,
+            range: 'custom',
+            customFrom,
+            customTo,
+            page: 1,
+          }))
+        }
         onSortChange={(sort) => setDetailsState((current) => ({ ...current, sort, page: 1 }))}
         onPageChange={(page) => setDetailsState((current) => ({ ...current, page }))}
       />

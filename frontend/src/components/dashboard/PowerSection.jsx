@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chart, registerables } from 'chart.js'
 import DashCard, { CardHeader, StatItem } from '../ui/DashCard'
 import GaugeChart from '../ui/GaugeChart'
 import Badge from '../ui/Badge'
 import SectionHeader from '../ui/SectionHeader'
 import HistoryRangeSelect from '../ui/HistoryRangeSelect'
-import { mapIpName } from '../../services/ipMapper'
+import { getServerDisplayName, mapIpName } from '../../services/ipMapper'
 import { average, filterRowsByRange, latestByKey } from '../../services/superAdminHistory'
 
 Chart.register(...registerables)
@@ -15,6 +15,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
   const powerChartInst = useRef(null)
   const historyRows = data.history?.hostMetrics || []
   const overallPowerRows = data.history?.overallPowerHourly || []
+  const [staticHistoryChartRows, setStaticHistoryChartRows] = useState([])
 
   const totalRange = getHistoryRange?.('power_total') || '1h'
   const historyRange = getHistoryRange?.('power_history') || '1h'
@@ -34,8 +35,9 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
   const latestPowerRows = useMemo(() => {
     if (!historyRows.length) {
       return (data.iloServers || []).map((server, index) => ({
-        hostId: server.hostId ?? index,
+        hostId: server.hostId,
         hostName: server.serverName || `Server ${index + 1}`,
+        ip: server.ip,
         powerKw: server.power?.consumedWatts != null ? Number((server.power.consumedWatts / 1000).toFixed(2)) : null,
       }))
     }
@@ -43,9 +45,15 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
   }, [data.iloServers, historyRows, psuRange])
 
   useEffect(() => {
+    if (staticHistoryChartRows.length === 0 && historyChartRows.length > 0) {
+      setStaticHistoryChartRows(historyChartRows)
+    }
+  }, [historyChartRows, staticHistoryChartRows.length])
+
+  useEffect(() => {
     const ctx = powerChartRef.current
     if (!ctx) return undefined
-    const history = historyChartRows.map((row) => ({ t: row.bucket, v: row.totalKw }))
+    const history = staticHistoryChartRows.map((row) => ({ t: row.bucket, v: row.totalKw }))
 
     if (powerChartInst.current) {
       powerChartInst.current.data.labels = history.map((p) => p.t)
@@ -86,23 +94,36 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
       powerChartInst.current?.destroy()
       powerChartInst.current = null
     }
-  }, [historyChartRows])
+  }, [staticHistoryChartRows])
 
   const powerKW = latestTotalRows.length
     ? Number(latestTotalRows.reduce((sum, row) => sum + Number(row.powerKw || 0), 0).toFixed(2))
     : Number(data.powerKW ?? 0)
   const capacityKw = Number(data.powerCapKW ?? 0)
-  const peakHistoryKw = historyChartRows.reduce((max, row) => Math.max(max, Number(row.totalKw || 0)), 0)
+
+  const getHostNameById = (hostId) => {
+    if (!Array.isArray(data.hosts) || hostId == null) return null
+    const host = data.hosts.find((host) => String(host.hostId || host.id) === String(hostId))
+    return host?.name || null
+  }
+  const peakHistoryKw = staticHistoryChartRows.reduce((max, row) => Math.max(max, Number(row.totalKw || 0)), 0)
   const peak = capacityKw > 0 ? capacityKw : peakHistoryKw
   const pct = peak > 0 ? Number(Math.min((powerKW / peak) * 100, 100).toFixed(1)) : Number(data.powerPct ?? 0)
   const badgeVariant = pct >= 90 ? 'danger' : pct >= 75 ? 'warning' : 'success'
   const badgeLabel = pct >= 90 ? 'Critical' : pct >= 75 ? 'High' : 'Optimal'
-  const iloServers = latestPowerRows.map((row) => ({
-    serverName: row.hostName,
-    reachable: true,
-    psus: [],
-    powerKw: row.powerKw,
-  }))
+  const iloServers = latestPowerRows.map((row, index) => {
+    const hostName = getHostNameById(row.hostId) || row.hostName
+    return {
+      serverName: getServerDisplayName(
+        { serverName: hostName, name: hostName, ip: row.ip, hostId: row.hostId },
+        index,
+        data.hosts || []
+      ),
+      reachable: true,
+      psus: [],
+      powerKw: row.powerKw,
+    }
+  })
 
   return (
     <section className="mb-12">
@@ -125,7 +146,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
             <div className="flex gap-6">
               <StatItem value={peak ? `${peak.toFixed(2)} kW` : null} label="Max Capacity" colorClass="text-blue-600" />
               <StatItem value={`${pct}%`} label="Utilization" colorClass="text-green-600" />
-              <StatItem value={latestPowerRows.length} label="Servers" colorClass="text-orange-500" />
+              <StatItem value={iloServers.length} label="Servers" colorClass="text-orange-500" />
             </div>
           </div>
         </DashCard>
@@ -136,7 +157,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
             actions={setHistoryRange ? <HistoryRangeSelect value={historyRange} onChange={(value) => setHistoryRange('power_history', value)} /> : null}
           />
           <div className="chart-wrap min-h-[320px] flex-1">
-            {historyChartRows.length === 0 ? (
+            {staticHistoryChartRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-gray-400">No power history available</div>
             ) : (
               <canvas ref={powerChartRef} />
@@ -154,7 +175,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
               <div className="py-10 text-center text-gray-400">Loading power data...</div>
             )}
             {iloServers.map((s, si) => (
-              <div key={si} className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+              <div key={s.serverName || si} className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
                 <div className="mb-4 text-sm font-bold text-gray-800">{mapIpName(s.serverName || `Server ${si + 1}`)}</div>
                 <div className="rounded-lg border border-gray-200 bg-white p-3">
                   <div className="text-xs font-bold text-gray-700 mb-1">Recorded Draw</div>

@@ -1,12 +1,38 @@
 import { API } from '../constants/config'
 
+function decodeTokenPayload(token) {
+  try {
+    const payload = token?.split('.')[1]
+    if (!payload) return null
+
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = atob(normalized)
+    return JSON.parse(decoded)
+  } catch (_error) {
+    return null
+  }
+}
+
 export function getAuthHeader() {
   const token = localStorage.getItem('authToken')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 export function getAuthRole() {
-  return localStorage.getItem('authRole') || 'dashboard'
+  const token = localStorage.getItem('authToken')
+  const payload = decodeTokenPayload(token)
+  const tokenRole = payload?.role
+  const storedRole = localStorage.getItem('authRole')
+
+  if (tokenRole) {
+    if (storedRole !== tokenRole) {
+      localStorage.setItem('authRole', tokenRole)
+    }
+    return tokenRole
+  }
+
+  if (storedRole) return storedRole
+  return 'dashboard'
 }
 
 export function setAuthSession({ token, role = 'dashboard' }) {
@@ -92,4 +118,8 @@ export async function fetchNetworks() {
 
 export async function fetchPowerHistory() {
   try { return await apiFetch('/datacenter/power/history') } catch (_error) { return [] }
+}
+
+export async function fetchRduSummary() {
+  try { return await apiFetch('/rdu/summary') } catch (_error) { return null }
 }

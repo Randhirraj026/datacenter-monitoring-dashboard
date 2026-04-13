@@ -115,7 +115,7 @@ export default function ILOSection({ data = {} }) {
 
   return (
     <section className="mb-12">
-      <SectionHeader icon="🔧" title="iLO Hardware Monitor" />
+      <SectionHeader icon="🔧" title="Hardware Monitoring" />
       {iloServers.length === 0 ? (
         <div className="text-center py-16 text-gray-400">Loading iLO data…</div>
       ) : (

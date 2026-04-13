@@ -9,9 +9,13 @@ const cors = require('cors');
 const { mountAuthRoutes, verifyToken } = require('./auth');
 const { initDb, isDbConfigured } = require('./db');
 const { startMetricsCollector } = require('./services/metricsStoreService');
+const { startArchiveScheduler } = require('./schedulers/archiveScheduler');
 const iloRoute = require('./routes/ilo');
+const rduRoute = require('./routes/rdu');
 const vsphereRoute = require('./routes/vsphere');
 const superAdminRoute = require('./routes/superadmin');
+const archiveRoute = require('./routes/archive');
+const alertRoute = require('./routes/alertRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,8 +35,11 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api/ilo', iloRoute);
+app.use('/api/rdu', rduRoute);
 app.use('/api', vsphereRoute);
 app.use('/api/superadmin', superAdminRoute);
+app.use('/api/archive', archiveRoute);
+app.use('/api/alerts', alertRoute);
 
 app.get('/health', (req, res) => {
     res.json({
@@ -51,6 +58,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     try {
         await initDb();
         startMetricsCollector();
+        startArchiveScheduler();
     } catch (error) {
         console.error('[DB] Startup failed:', error.message);
     }

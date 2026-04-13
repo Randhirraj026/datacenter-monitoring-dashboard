@@ -1,5 +1,5 @@
 import { API } from '../constants/config'
-import { getAuthHeader } from './api'
+import { clearAuthSession, getAuthHeader } from './api'
 
 const mockHosts = [
   { id: 1, name: 'OrIoN-ESXi-01', totalCores: 48, totalMemory: '256 GB' },
@@ -45,6 +45,12 @@ async function apiGet(path) {
       },
     })
 
+    if (res.status === 401) {
+      clearAuthSession()
+      window.location.href = '/login'
+      return null
+    }
+
     if (!res.ok) return null
     return await res.json()
   } catch (_error) {
@@ -52,8 +58,52 @@ async function apiGet(path) {
   }
 }
 
+async function apiRequest(path, method, body) {
+  try {
+    const res = await fetch(`${API}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+
+    if (res.status === 401) {
+      clearAuthSession()
+      window.location.href = '/login'
+      throw new Error('Session expired')
+    }
+
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      throw new Error(data?.error || data?.message || 'Request failed')
+    }
+
+    return data
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('Request failed')
+  }
+}
+
 export async function fetchSuperAdminDashboard() {
   return apiGet('/superadmin/dashboard')
+}
+
+export async function fetchAlertConfiguration() {
+  return apiGet('/alerts/config')
+}
+
+export async function updateSmtpSettings(payload) {
+  return apiRequest('/alerts/smtp-settings', 'PUT', payload)
+}
+
+export async function updateAlertRules(payload) {
+  return apiRequest('/alerts/rules', 'PUT', payload)
+}
+
+export async function sendAlertTestEmail() {
+  return apiRequest('/alerts/test-email', 'POST')
 }
 
 function pad2(value) {
@@ -495,6 +545,8 @@ export async function fetchSuperAdminDetails(filters = {}) {
     pageSize: filters.pageSize,
     sort: filters.sort,
     hostId: filters.hostId,
+    customFrom: filters.customFrom,
+    customTo: filters.customTo,
   })
 
   const liveDetails = await apiGet(`/superadmin/details${query}`)

@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react'
 import { fetchSuperAdminBundleFromDb, fetchSuperAdminDashboard, fetchSuperAdminDetails } from '../services/superAdminApi'
 
-  export function useSuperAdminBundleData({ range = '24h', hostId = '', customFrom, customTo } = {}) {
+const SUPERADMIN_POLL_INTERVAL_MS = 120000
+
+export function useSuperAdminBundleData({ range = '24h', hostId = '', customFrom, customTo } = {}) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
+    let firstLoad = true
 
     async function load() {
-      setLoading(true)
-      setError('')
+      if (firstLoad) {
+        setLoading(true)
+        setError('')
+      }
 
       try {
         const response = await fetchSuperAdminBundleFromDb({ range, hostId: hostId || undefined, customFrom, customTo })
@@ -19,25 +24,28 @@ import { fetchSuperAdminBundleFromDb, fetchSuperAdminDashboard, fetchSuperAdminD
 
         if (cancelled) return
         if (!response) {
-          setError('Failed to fetch historical DB data.')
-          setData(null)
+          if (firstLoad) {
+            setError('Failed to fetch historical DB data.')
+            setData(null)
+          }
           return
         }
 
         setData(response)
       } catch (err) {
         console.error('[SuperAdmin][bundle]', err)
-        if (!cancelled) {
+        if (!cancelled && firstLoad) {
           setError('Failed to fetch historical DB data.')
           setData(null)
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && firstLoad) setLoading(false)
+        firstLoad = false
       }
     }
 
     load()
-    const intervalId = setInterval(load, 10000)
+    const intervalId = setInterval(load, SUPERADMIN_POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(intervalId)
@@ -56,10 +64,13 @@ export function useSuperAdminSectionData({ section, range = '24h', hostId = '', 
     if (!section) return undefined
 
     let cancelled = false
+    let firstLoad = true
 
     async function load() {
-      setLoading(true)
-      setError('')
+      if (firstLoad) {
+        setLoading(true)
+        setError('')
+      }
 
       try {
         const response = await fetchSuperAdminDetails({
@@ -77,25 +88,28 @@ export function useSuperAdminSectionData({ section, range = '24h', hostId = '', 
 
         if (cancelled) return
         if (!response) {
-          setError('Failed to fetch historical DB data.')
-          setData(null)
+          if (firstLoad) {
+            setError('Failed to fetch historical DB data.')
+            setData(null)
+          }
           return
         }
 
         setData(response)
       } catch (err) {
         console.error(`[SuperAdmin][${section}]`, err)
-        if (!cancelled) {
+        if (!cancelled && firstLoad) {
           setError('Failed to fetch historical DB data.')
           setData(null)
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && firstLoad) setLoading(false)
+        firstLoad = false
       }
     }
 
     load()
-    const intervalId = setInterval(load, 10000)
+    const intervalId = setInterval(load, SUPERADMIN_POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(intervalId)
@@ -112,10 +126,13 @@ export function useSuperAdminDashboardSnapshot() {
 
   useEffect(() => {
     let cancelled = false
+    let firstLoad = true
 
     async function load() {
-      setLoading(true)
-      setError('')
+      if (firstLoad) {
+        setLoading(true)
+        setError('')
+      }
 
       try {
         const response = await fetchSuperAdminDashboard()
@@ -123,25 +140,28 @@ export function useSuperAdminDashboardSnapshot() {
 
         if (cancelled) return
         if (!response) {
-          setError('Failed to fetch dashboard snapshot from DB.')
-          setData(null)
+          if (firstLoad) {
+            setError('Failed to fetch dashboard snapshot from DB.')
+            setData(null)
+          }
           return
         }
 
         setData(response)
       } catch (err) {
         console.error('[SuperAdmin][dashboard]', err)
-        if (!cancelled) {
+        if (!cancelled && firstLoad) {
           setError('Failed to fetch dashboard snapshot from DB.')
           setData(null)
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && firstLoad) setLoading(false)
+        firstLoad = false
       }
     }
 
     load()
-    const intervalId = setInterval(load, 10000)
+    const intervalId = setInterval(load, SUPERADMIN_POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(intervalId)

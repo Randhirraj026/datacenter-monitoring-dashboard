@@ -1,6 +1,6 @@
 const { Pool } = require('pg');
 
-const TWO_MINUTES_MS = 2 * 60 * 1000;
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
 const pool = process.env.PGHOST && process.env.PGUSER && process.env.PGDATABASE
     ? new Pool({
@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS hosts (
   host_name TEXT NOT NULL UNIQUE,
   total_cores INTEGER DEFAULT 0,
   total_memory_gb INTEGER DEFAULT 0,
+  connection_state TEXT NOT NULL DEFAULT 'CONNECTED',
+  power_state TEXT NOT NULL DEFAULT 'POWERED_ON',
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -29,6 +31,10 @@ CREATE TABLE IF NOT EXISTS virtual_machines (
   vm_name TEXT NOT NULL UNIQUE,
   host_id BIGINT REFERENCES hosts(id),
   status TEXT NOT NULL DEFAULT 'STOPPED',
+  cpu_count INTEGER NOT NULL DEFAULT 0,
+  memory_mib INTEGER NOT NULL DEFAULT 0,
+  last_host_name TEXT,
+  last_power_state TEXT,
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   source_created_at TIMESTAMPTZ,
@@ -156,6 +162,73 @@ CREATE TABLE IF NOT EXISTS ilo_storage_metrics (
   drive_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS rdu_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ok BOOLEAN NOT NULL DEFAULT FALSE,
+  source TEXT,
+  reason TEXT,
+  rack_front_temp_c NUMERIC(6,2),
+  rack_rear_temp_c NUMERIC(6,2),
+  rack_front_humidity_pct NUMERIC(6,2),
+  rack_rear_humidity_pct NUMERIC(6,2),
+  humidity_pct NUMERIC(6,2),
+  ac_supply_air_c NUMERIC(6,2),
+  ac_return_air_c NUMERIC(6,2),
+  power_cut_active BOOLEAN,
+  ups_battery_pct NUMERIC(6,2),
+  ups_battery_minutes_left NUMERIC(10,2),
+  mains_status TEXT,
+  rdu_status TEXT,
+  active_alarm_count INTEGER NOT NULL DEFAULT 0,
+  alerts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  sensors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  raw_payload JSONB
+);
+
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS connection_state TEXT NOT NULL DEFAULT 'CONNECTED';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS power_state TEXT NOT NULL DEFAULT 'POWERED_ON';
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS cpu_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS memory_mib INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS last_host_name TEXT;
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS last_power_state TEXT;
+
+CREATE TABLE IF NOT EXISTS smtp_settings (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  smtp_host TEXT NOT NULL DEFAULT '',
+  smtp_port INTEGER NOT NULL DEFAULT 587,
+  smtp_user TEXT NOT NULL DEFAULT '',
+  smtp_password TEXT NOT NULL DEFAULT '',
+  sender_email TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  ssl_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  alert_recipient_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  cc_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  bcc_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS alert_rules (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  cpu_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 85,
+  memory_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 85,
+  disk_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 90,
+  temperature_threshold NUMERIC(5,2) NOT NULL DEFAULT 35,
+  power_failure_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_added_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_removed_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_power_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  host_down_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  rdu_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  dashboard_parameter_change_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS vm_power_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE INDEX IF NOT EXISTS idx_host_metrics_host_ts ON host_metrics(host_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_datastore_metrics_ds_ts ON datastore_metrics(datastore_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_vm_events_vm_ts ON vm_events(vm_id, ts DESC);
@@ -166,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_ilo_server_metrics_server_ts ON ilo_server_metric
 CREATE INDEX IF NOT EXISTS idx_ilo_psu_metrics_server_ts ON ilo_psu_metrics(ilo_server_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_ilo_fan_metrics_server_ts ON ilo_fan_metrics(ilo_server_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_ilo_storage_metrics_server_ts ON ilo_storage_metrics(ilo_server_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_rdu_snapshots_ts ON rdu_snapshots(ts DESC);
 `;
 
 function isDbConfigured() {
@@ -223,6 +297,8 @@ async function initDb() {
     }
 
     await pool.query(bootstrapSql);
+    const { ensureDefaultRows } = require('./alertSettings');
+    await ensureDefaultRows();
     console.log('[DB] Schema ready');
     return true;
 }
@@ -232,15 +308,23 @@ async function getHostIdMap(client, hosts) {
 
     for (const host of hosts) {
         const result = await client.query(
-            `INSERT INTO hosts (host_name, total_cores, total_memory_gb, is_active, updated_at)
-             VALUES ($1, $2, $3, TRUE, now())
+            `INSERT INTO hosts (host_name, total_cores, total_memory_gb, connection_state, power_state, is_active, updated_at)
+             VALUES ($1, $2, $3, $4, $5, TRUE, now())
              ON CONFLICT (host_name)
              DO UPDATE SET total_cores = EXCLUDED.total_cores,
                            total_memory_gb = EXCLUDED.total_memory_gb,
+                           connection_state = EXCLUDED.connection_state,
+                           power_state = EXCLUDED.power_state,
                            is_active = TRUE,
                            updated_at = now()
              RETURNING id`,
-            [host.name, host.cpuCores || 0, host.totalMemoryGB || 0]
+            [
+                host.name,
+                host.cpuCores || 0,
+                host.totalMemoryGB || 0,
+                host.connectionState || 'CONNECTED',
+                host.powerState || 'POWERED_ON',
+            ]
         );
 
         map.set(host.name, result.rows[0].id);
@@ -345,17 +429,115 @@ async function getIloServerIdMap(client, hosts, hostIdMap, iloPayload) {
 
 async function storeAlertSnapshot(client, alerts, now) {
     for (const alert of alerts || []) {
+        const parsedAlertTime = alert.timestamp ? new Date(alert.timestamp) : null;
+        const alertTime = parsedAlertTime && !Number.isNaN(parsedAlertTime.getTime()) ? parsedAlertTime : now;
         await client.query(
             `INSERT INTO alert_snapshots (ts, alert_type, severity, message)
              VALUES ($1, $2, $3, $4)`,
             [
-                now,
+                alertTime,
                 alert.type || 'SYSTEM',
                 alert.severity || 'info',
                 alert.message || 'No message',
             ]
         );
     }
+}
+
+function normalizeStoredAlertSeverity(value) {
+    const normalized = String(value || 'info').toLowerCase();
+    if (normalized === 'critical' || normalized === 'warning' || normalized === 'info') return normalized;
+    return 'info';
+}
+
+function inferGeneratedAlertSeverity(event = {}) {
+    const type = String(event.type || '').toUpperCase();
+    const subject = String(event.subject || '').toUpperCase();
+
+    if (
+        type.includes('HOST_DOWN')
+        || type.includes('POWER_FAILURE')
+        || type.includes('RDU_ALERT')
+        || subject.includes('CRITICAL')
+        || subject.includes('POWER FAILURE')
+    ) {
+        return 'critical';
+    }
+
+    if (type.includes('SPIKE') || type.includes('CHANGE') || subject.includes('CHANGE')) {
+        return 'warning';
+    }
+
+    return 'info';
+}
+
+function buildGeneratedAlertMessage(event = {}) {
+    const details = event.details || {};
+    const vmName = details['VM Name'];
+    const hostName = details['Host Name'] || details.Host || details['Host IP'];
+
+    switch (String(event.type || '').toUpperCase()) {
+        case 'VM_ADDED':
+            return vmName ? `VM ${vmName} has been added` : (event.subject || 'VM added');
+        case 'VM_REMOVED':
+            return vmName ? `VM ${vmName} has been deleted` : (event.subject || 'VM deleted');
+        case 'VM_POWER_ON':
+            return vmName ? `VM ${vmName} has been powered on` : (event.subject || 'VM powered on');
+        case 'VM_POWER_OFF':
+            return vmName ? `VM ${vmName} has been powered off` : (event.subject || 'VM powered off');
+        case 'HOST_DOWN':
+            return hostName ? `Host ${hostName} is unavailable` : (event.subject || 'Host down');
+        default:
+            return event.subject || details.Message || 'Alert generated';
+    }
+}
+
+async function storeGeneratedAlertEvents(client, events, now = new Date()) {
+    if (!Array.isArray(events) || !events.length) return;
+    const executor = client || pool;
+    if (!executor) return;
+
+    for (const event of events) {
+        const parsedEventTime = event.timestamp ? new Date(event.timestamp) : null;
+        const eventTime = parsedEventTime && !Number.isNaN(parsedEventTime.getTime()) ? parsedEventTime : now;
+        await executor.query(
+            `INSERT INTO alert_snapshots (ts, alert_type, severity, message)
+             VALUES ($1, $2, $3, $4)`,
+            [
+                eventTime,
+                event.type || 'SYSTEM',
+                inferGeneratedAlertSeverity(event),
+                buildGeneratedAlertMessage(event),
+            ]
+        );
+    }
+}
+
+function mapAlertSnapshotRow(row) {
+    return {
+        id: row.id,
+        type: row.alert_type || 'SYSTEM',
+        severity: normalizeStoredAlertSeverity(row.severity),
+        message: row.message || 'Alert generated',
+        timestamp: row.ts instanceof Date ? row.ts.toISOString() : row.ts,
+        title: row.alert_type || 'SYSTEM',
+        status: 'active',
+    };
+}
+
+async function getRecentAlertSnapshots(limit = 20) {
+    if (!pool) return [];
+
+    const safeLimit = Math.max(1, Math.min(Number(limit || 20), 100));
+    const result = await pool.query(
+        `SELECT id, ts, alert_type, severity, message
+         FROM alert_snapshots
+         ORDER BY ts DESC, id DESC
+         LIMIT $1`,
+        [safeLimit]
+    );
+
+    return result.rows.map(mapAlertSnapshotRow);
 }
 
 async function storeNetworkSnapshot(client, networks, now) {
@@ -453,57 +635,148 @@ async function storeIloSnapshot(client, hosts, hostIdMap, iloPayload, now) {
     }
 }
 
+async function storeRduSnapshot(client, rduPayload, now) {
+    if (!rduPayload || typeof rduPayload !== 'object') return;
+
+    const metrics = rduPayload.metrics || {};
+    const alerts = Array.isArray(rduPayload.alerts) ? rduPayload.alerts : [];
+    const sensors = Array.isArray(rduPayload.sensors) ? rduPayload.sensors : [];
+    const activeAlarmCount = Number(rduPayload?.raw?.activeAlarmCount || 0);
+
+    await client.query(
+        `INSERT INTO rdu_snapshots (
+            ts, ok, source, reason,
+            rack_front_temp_c, rack_rear_temp_c,
+            rack_front_humidity_pct, rack_rear_humidity_pct, humidity_pct,
+            ac_supply_air_c, ac_return_air_c,
+            power_cut_active, ups_battery_pct, ups_battery_minutes_left,
+            mains_status, rdu_status, active_alarm_count,
+            alerts, sensors, raw_payload
+        )
+        VALUES (
+            $1, $2, $3, $4,
+            $5, $6,
+            $7, $8, $9,
+            $10, $11,
+            $12, $13, $14,
+            $15, $16, $17,
+            $18::jsonb, $19::jsonb, $20::jsonb
+        )`,
+        [
+            now,
+            Boolean(rduPayload.ok),
+            rduPayload.source || null,
+            rduPayload.reason || null,
+            metrics.rackFrontTempC ?? null,
+            metrics.rackRearTempC ?? null,
+            metrics.rackFrontHumidityPct ?? null,
+            metrics.rackRearHumidityPct ?? null,
+            metrics.humidityPct ?? null,
+            metrics.acSupplyAirC ?? null,
+            metrics.acReturnAirC ?? null,
+            metrics.powerCutActive ?? null,
+            metrics.upsBatteryPct ?? null,
+            metrics.upsBatteryMinutesLeft ?? null,
+            metrics.mainsStatus ?? null,
+            metrics.rduStatus ?? null,
+            Number.isFinite(activeAlarmCount) ? activeAlarmCount : 0,
+            JSON.stringify(alerts),
+            JSON.stringify(sensors),
+            JSON.stringify(rduPayload.raw || null),
+        ]
+    );
+}
+
 async function syncVirtualMachines(client, vms, hostIdMap, now) {
-    if (!Array.isArray(vms) || vms.length === 0) return;
+    const changes = {
+        added: [],
+        deleted: [],
+    };
+
+    if (!Array.isArray(vms)) return changes;
 
     const existingResult = await client.query(`
-      SELECT vm.id, vm.vm_name, vm.host_id, vm.status, vm.is_deleted, h.host_name
+      SELECT vm.id, vm.vm_name, vm.host_id, vm.status, vm.is_deleted, vm.cpu_count, vm.memory_mib, vm.last_host_name, vm.last_power_state, h.host_name
       FROM virtual_machines vm
       LEFT JOIN hosts h ON h.id = vm.host_id
     `);
 
     const existingByName = new Map(existingResult.rows.map((row) => [row.vm_name, row]));
+    const hasActiveInventory = existingResult.rows.some((row) => !row.is_deleted);
+    const isBaselineSeed = existingResult.rows.length === 0 || !hasActiveInventory;
     const seenVmNames = new Set();
 
     for (const vm of vms) {
         const hostId = hostIdMap.get(vm.host) || null;
         const normalizedStatus = normalizeVmStatus(vm.powerState);
         const existing = existingByName.get(vm.name);
+        const vmCpuCount = Number(vm.cpuCount || 0);
+        const vmMemoryMib = Number(vm.memory || 0);
+        const vmHostName = vm.host || null;
+        const vmPowerState = vm.powerState || normalizedStatus;
         seenVmNames.add(vm.name);
 
         if (!existing) {
             const inserted = await client.query(
-                `INSERT INTO virtual_machines (vm_name, host_id, status, first_seen_at, last_seen_at, source_created_at, is_deleted)
-                 VALUES ($1, $2, $3, $4, $4, $4, FALSE)
+                `INSERT INTO virtual_machines (vm_name, host_id, status, cpu_count, memory_mib, last_host_name, last_power_state, first_seen_at, last_seen_at, source_created_at, is_deleted)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8, FALSE)
                  RETURNING id`,
-                [vm.name, hostId, normalizedStatus, now]
+                [vm.name, hostId, normalizedStatus, vmCpuCount, vmMemoryMib, vmHostName, vmPowerState, now]
             );
 
-            await client.query(
-                `INSERT INTO vm_events (ts, vm_id, host_id, vm_name, event_type, status)
-                 VALUES ($1, $2, $3, $4, 'CREATED', $5)`,
-                [now, inserted.rows[0].id, hostId, vm.name, normalizedStatus]
-            );
+            if (!isBaselineSeed) {
+                await client.query(
+                    `INSERT INTO vm_events (ts, vm_id, host_id, vm_name, event_type, status)
+                     VALUES ($1, $2, $3, $4, 'CREATED', $5)`,
+                    [now, inserted.rows[0].id, hostId, vm.name, normalizedStatus]
+                );
+
+                changes.added.push({
+                    id: inserted.rows[0].id,
+                    name: vm.name,
+                    hostId,
+                    hostName: vmHostName,
+                    cpuCount: vmCpuCount,
+                    memoryMib: vmMemoryMib,
+                    powerState: vmPowerState,
+                });
+            }
             continue;
         }
 
         await client.query(
             `UPDATE virtual_machines
              SET host_id = $2,
-                 status = $3,
-                 last_seen_at = $4,
-                 is_deleted = FALSE,
-                 source_deleted_at = NULL
-             WHERE id = $1`,
-            [existing.id, hostId, normalizedStatus, now]
+                  status = $3,
+                  cpu_count = $4,
+                  memory_mib = $5,
+                  last_host_name = $6,
+                  last_power_state = $7,
+                  last_seen_at = $8,
+                  is_deleted = FALSE,
+                  source_deleted_at = NULL
+              WHERE id = $1`,
+            [existing.id, hostId, normalizedStatus, vmCpuCount, vmMemoryMib, vmHostName, vmPowerState, now]
         );
 
         if (existing.is_deleted) {
-            await client.query(
-                `INSERT INTO vm_events (ts, vm_id, host_id, vm_name, event_type, status)
-                 VALUES ($1, $2, $3, $4, 'CREATED', $5)`,
-                [now, existing.id, hostId, vm.name, normalizedStatus]
-            );
+            if (!isBaselineSeed) {
+                await client.query(
+                    `INSERT INTO vm_events (ts, vm_id, host_id, vm_name, event_type, status)
+                     VALUES ($1, $2, $3, $4, 'CREATED', $5)`,
+                    [now, existing.id, hostId, vm.name, normalizedStatus]
+                );
+
+                changes.added.push({
+                    id: existing.id,
+                    name: vm.name,
+                    hostId,
+                    hostName: vmHostName,
+                    cpuCount: vmCpuCount,
+                    memoryMib: vmMemoryMib,
+                    powerState: vmPowerState,
+                });
+            }
         } else if (existing.status !== normalizedStatus) {
             await client.query(
                 `INSERT INTO vm_events (ts, vm_id, host_id, vm_name, event_type, status)
@@ -514,7 +787,7 @@ async function syncVirtualMachines(client, vms, hostIdMap, now) {
     }
 
     for (const row of existingResult.rows) {
-        if (!row.is_deleted && !seenVmNames.has(row.vm_name)) {
+        if (!isBaselineSeed && !row.is_deleted && !seenVmNames.has(row.vm_name)) {
             await client.query(
                 `UPDATE virtual_machines
                  SET is_deleted = TRUE,
@@ -529,13 +802,24 @@ async function syncVirtualMachines(client, vms, hostIdMap, now) {
                  VALUES ($1, $2, $3, $4, 'DELETED', 'STOPPED')`,
                 [now, row.id, row.host_id, row.vm_name]
             );
+
+            changes.deleted.push({
+                name: row.vm_name,
+                hostId: row.host_id,
+                hostName: row.last_host_name || row.host_name || null,
+                cpuCount: Number(row.cpu_count || 0),
+                memoryMib: Number(row.memory_mib || 0),
+                powerState: row.last_power_state || row.status || 'STOPPED',
+            });
         }
     }
+
+    return changes;
 }
 
-async function storeSnapshot({ hosts, vms, datastores, iloPayload, alerts, networks }) {
+async function storeSnapshot({ hosts, vms, datastores, iloPayload, alerts, networks, rduPayload }) {
     if (!pool) return false;
-    if ((!hosts || hosts.length === 0) && (!datastores || datastores.length === 0)) return false;
+    if ((!hosts || hosts.length === 0) && (!vms || vms.length === 0) && (!datastores || datastores.length === 0) && !rduPayload) return false;
 
     const client = await pool.connect();
     const now = new Date();
@@ -575,13 +859,14 @@ async function storeSnapshot({ hosts, vms, datastores, iloPayload, alerts, netwo
             );
         }
 
-        await syncVirtualMachines(client, vms || [], hostIdMap, now);
+        const vmChanges = await syncVirtualMachines(client, vms || [], hostIdMap, now);
         await storeAlertSnapshot(client, alerts || [], now);
         await storeNetworkSnapshot(client, networks || [], now);
         await storeIloSnapshot(client, hosts || [], hostIdMap, iloPayload || {}, now);
+        await storeRduSnapshot(client, rduPayload, now);
 
         await client.query('COMMIT');
-        return true;
+        return { ok: true, vmChanges };
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('[DB] storeSnapshot failed:', error.message);
@@ -628,7 +913,7 @@ async function getSuperAdminBundle(filters = {}) {
 
     const [hostsResult, vmsResult, datastoresResult, hostMetricsResult, datastoreMetricsResult, vmEventsResult] = await Promise.all([
         pool.query({ text: `SELECT id, host_name AS name, total_cores, total_memory_gb FROM hosts WHERE is_active = TRUE ORDER BY host_name`, values: [], simple: true }),
-        pool.query({ text: `SELECT id, vm_name AS name, host_id FROM virtual_machines ORDER BY vm_name`, values: [], simple: true }),
+        pool.query({ text: `SELECT id, vm_name AS name, host_id FROM virtual_machines WHERE is_deleted = FALSE ORDER BY vm_name`, values: [], simple: true }),
         pool.query({ text: `SELECT id, datastore_name AS name FROM datastores WHERE is_active = TRUE ORDER BY datastore_name`, values: [], simple: true }),
         pool.query({
             text: `SELECT hm.ts, hm.host_id, h.host_name, hm.cpu_usage_pct, hm.memory_usage_pct, hm.power_kw, hm.temperature_c, hm.status
@@ -701,6 +986,38 @@ async function getSuperAdminBundle(filters = {}) {
         hostName: row.host_name || '-',
         eventType: row.event_type,
         status: row.status,
+    }));
+
+    const rduSnapshotsResult = await pool.query({
+        text: `SELECT
+                 id,
+                 ts,
+                 ok,
+                 source,
+                 reason,
+                 rack_front_temp_c,
+                 rack_rear_temp_c,
+                 humidity_pct,
+                 ups_battery_pct,
+                 active_alarm_count
+               FROM rdu_snapshots
+               WHERE ts BETWEEN $1 AND $2
+               ORDER BY ts ASC`,
+        values: baseParams,
+        simple: true,
+    });
+
+    const rduSnapshots = rduSnapshotsResult.rows.map((row) => ({
+        id: row.id,
+        ts: row.ts.toISOString(),
+        ok: Boolean(row.ok),
+        source: row.source || null,
+        reason: row.reason || null,
+        rackFrontTempC: row.rack_front_temp_c != null ? Number(row.rack_front_temp_c) : null,
+        rackRearTempC: row.rack_rear_temp_c != null ? Number(row.rack_rear_temp_c) : null,
+        humidityPct: row.humidity_pct != null ? Number(row.humidity_pct) : null,
+        upsBatteryPct: row.ups_battery_pct != null ? Number(row.ups_battery_pct) : null,
+        activeAlarmCount: Number(row.active_alarm_count || 0),
     }));
 
     const latestByHost = new Map();
@@ -789,6 +1106,7 @@ async function getSuperAdminBundle(filters = {}) {
             vmLifecycle: Array.from(vmLifecycleMap.values()).sort((a, b) => a.statDate.localeCompare(b.statDate)),
             overallPowerHourly: Array.from(hourlyPowerMap.entries()).map(([bucket, totalKw]) => ({ bucket, totalKw: Number(totalKw.toFixed(2)) })),
             previousHourMemory,
+            rduSnapshots,
         },
         tables: {
             hostMetrics: [...hostMetrics].sort((a, b) => new Date(b.ts) - new Date(a.ts)),
@@ -798,6 +1116,7 @@ async function getSuperAdminBundle(filters = {}) {
                 .map((row) => ({ id: `p-${row.id}`, ts: row.ts, hostId: row.hostId, hostName: row.hostName, powerKw: row.powerKw, status: row.status }))
                 .sort((a, b) => new Date(b.ts) - new Date(a.ts)),
             datastoreLogs: [...datastoreLogs].sort((a, b) => new Date(b.ts) - new Date(a.ts)),
+            rduSnapshots: [...rduSnapshots].sort((a, b) => new Date(b.ts) - new Date(a.ts)),
         },
         drilldowns: {
             hosts: hostsResult.rows.map((host) => ({
@@ -836,7 +1155,7 @@ function formatDashboardMemory(totalMemoryGb) {
 async function getSuperAdminDashboardData() {
     if (!pool) return null;
 
-    const [hostsResult, latestHostMetricsResult, currentVmsResult, latestDatastoresResult, powerHistoryResult] = await Promise.all([
+    const [hostsResult, latestHostMetricsResult, currentVmsResult, latestDatastoresResult, powerHistoryResult, latestRduSnapshotResult, recentAlerts] = await Promise.all([
         pool.query(`
             SELECT id, host_name AS name, total_cores, total_memory_gb
             FROM hosts
@@ -902,6 +1221,30 @@ async function getSuperAdminDashboardData() {
             GROUP BY rp.ts
             ORDER BY rp.ts ASC
         `),
+        pool.query(`
+            SELECT
+                ts,
+                ok,
+                source,
+                reason,
+                rack_front_temp_c,
+                rack_rear_temp_c,
+                rack_front_humidity_pct,
+                rack_rear_humidity_pct,
+                humidity_pct,
+                ac_supply_air_c,
+                ac_return_air_c,
+                power_cut_active,
+                ups_battery_pct,
+                ups_battery_minutes_left,
+                mains_status,
+                rdu_status,
+                active_alarm_count
+            FROM rdu_snapshots
+            ORDER BY ts DESC
+            LIMIT 1
+        `),
+        getRecentAlertSnapshots(20),
     ]);
 
     const hostRows = latestHostMetricsResult.rows.map((row) => {
@@ -999,6 +1342,31 @@ async function getSuperAdminDashboardData() {
         storage: [],
     }));
 
+    const latestRduRow = latestRduSnapshotResult.rows[0] || null;
+    const rdu = latestRduRow
+        ? {
+            ok: Boolean(latestRduRow.ok),
+            source: latestRduRow.source || null,
+            reason: latestRduRow.reason || null,
+            fetchedAt: latestRduRow.ts instanceof Date ? latestRduRow.ts.toISOString() : latestRduRow.ts,
+            metrics: {
+                rackFrontTempC: latestRduRow.rack_front_temp_c != null ? Number(latestRduRow.rack_front_temp_c) : null,
+                rackRearTempC: latestRduRow.rack_rear_temp_c != null ? Number(latestRduRow.rack_rear_temp_c) : null,
+                rackFrontHumidityPct: latestRduRow.rack_front_humidity_pct != null ? Number(latestRduRow.rack_front_humidity_pct) : null,
+                rackRearHumidityPct: latestRduRow.rack_rear_humidity_pct != null ? Number(latestRduRow.rack_rear_humidity_pct) : null,
+                humidityPct: latestRduRow.humidity_pct != null ? Number(latestRduRow.humidity_pct) : null,
+                acSupplyAirC: latestRduRow.ac_supply_air_c != null ? Number(latestRduRow.ac_supply_air_c) : null,
+                acReturnAirC: latestRduRow.ac_return_air_c != null ? Number(latestRduRow.ac_return_air_c) : null,
+                powerCutActive: latestRduRow.power_cut_active,
+                upsBatteryPct: latestRduRow.ups_battery_pct != null ? Number(latestRduRow.ups_battery_pct) : null,
+                upsBatteryMinutesLeft: latestRduRow.ups_battery_minutes_left != null ? Number(latestRduRow.ups_battery_minutes_left) : null,
+                mainsStatus: latestRduRow.mains_status || null,
+                rduStatus: latestRduRow.rdu_status || null,
+                activeAlarmCount: Number(latestRduRow.active_alarm_count || 0),
+            },
+        }
+        : null;
+
     return {
         cpuPct: cpuAverage,
         cpuCores: totalCores,
@@ -1032,9 +1400,10 @@ async function getSuperAdminDashboardData() {
         powerPsuOk: null,
         powerHistory,
         inletTemp: avgInletTemp,
-        alerts: [],
+        alerts: recentAlerts,
         serverNames: hostRows.slice(0, 3).map((row) => row.name),
         lastSnapshotAt: hostRows[0]?.ts ? new Date(hostRows[0].ts).toISOString() : null,
+        rdu,
     };
 }
 
@@ -1327,6 +1696,45 @@ async function getSuperAdminSectionDetails(filters = {}) {
                 LIMIT $${limitParam} OFFSET $${offsetParam}
             `,
         },
+        rdu: {
+            title: 'Vertiv RDU Records',
+            columns: [
+                { key: 'timestamp', label: 'Timestamp' },
+                { key: 'ok', label: 'Connected' },
+                { key: 'rackFrontTempC', label: 'Front Temp C' },
+                { key: 'rackRearTempC', label: 'Rear Temp C' },
+                { key: 'humidityPct', label: 'Humidity %' },
+                { key: 'upsBatteryPct', label: 'Battery %' },
+                { key: 'upsBatteryMinutesLeft', label: 'Battery Min' },
+                { key: 'mainsStatus', label: 'Mains Status' },
+                { key: 'rduStatus', label: 'RDU Status' },
+                { key: 'activeAlarmCount', label: 'Alarm Count' },
+                { key: 'reason', label: 'Reason' },
+            ],
+            countSql: `
+                SELECT COUNT(*)::int AS total
+                FROM rdu_snapshots
+                WHERE ts BETWEEN $1 AND $2
+            `,
+            dataSql: `
+                SELECT
+                  ts AS timestamp,
+                  ok,
+                  ROUND(rack_front_temp_c, 2) AS "rackFrontTempC",
+                  ROUND(rack_rear_temp_c, 2) AS "rackRearTempC",
+                  ROUND(humidity_pct, 2) AS "humidityPct",
+                  ROUND(ups_battery_pct, 2) AS "upsBatteryPct",
+                  ROUND(ups_battery_minutes_left, 2) AS "upsBatteryMinutesLeft",
+                  mains_status AS "mainsStatus",
+                  rdu_status AS "rduStatus",
+                  active_alarm_count AS "activeAlarmCount",
+                  reason
+                FROM rdu_snapshots
+                WHERE ts BETWEEN $1 AND $2
+                ORDER BY ts ${sortDirection}, id ${sortDirection}
+                LIMIT $3 OFFSET $4
+            `,
+        },
     };
 
     const definition = definitions[section];
@@ -1383,13 +1791,39 @@ async function getRecentPowerHistory() {
     }
 }
 
+async function getLatestSnapshotAt() {
+    if (!pool) return null;
+
+    try {
+        const result = await pool.query(`
+            SELECT MAX(ts) AS latest_ts
+            FROM (
+                SELECT MAX(ts) AS ts FROM host_metrics
+                UNION ALL
+                SELECT MAX(ts) AS ts FROM vm_events
+                UNION ALL
+                SELECT MAX(ts) AS ts FROM rdu_snapshots
+            ) snapshots
+        `);
+
+        return result.rows[0]?.latest_ts || null;
+    } catch (error) {
+        console.error('[DB] getLatestSnapshotAt failed:', error.message);
+        return null;
+    }
+}
+
 module.exports = {
-    TWO_MINUTES_MS,
+    FIVE_MINUTES_MS,
     initDb,
     isDbConfigured,
+    pool,
     storeSnapshot,
+    storeGeneratedAlertEvents,
     getSuperAdminBundle,
     getSuperAdminDashboardData,
     getSuperAdminSectionDetails,
+    getRecentAlertSnapshots,
     getRecentPowerHistory,
+    getLatestSnapshotAt,
 };

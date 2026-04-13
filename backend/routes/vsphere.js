@@ -24,7 +24,8 @@ const {
     getNetworks,
 } = require('../services/vsphereService');
 
-const { getRecentPowerHistory } = require('../db');
+const { getRecentPowerHistory, FIVE_MINUTES_MS } = require('../db');
+const { ensureFreshSnapshot } = require('../services/metricsStoreService');
 
 // ── Wrapper: catch errors, always return valid JSON ───────────────
 function handle(fn) {
@@ -42,7 +43,16 @@ function handle(fn) {
 router.get('/datacenter/realtime', handle(getRealtime));
 router.get('/datacenter/power/history', handle(getRecentPowerHistory));
 router.get('/hosts',               handle(getHosts));
-router.get('/vms',                 handle(getVMs));
+router.get('/vms',                 handle(async () => {
+    const data = await getVMs({ forceRefresh: true });
+
+    // Keep DB-backed alerts and superadmin inventory close to the admin page's live polling loop.
+    ensureFreshSnapshot(FIVE_MINUTES_MS).catch((error) => {
+        console.error('[Route /vms][snapshot]', error.message);
+    });
+
+    return data;
+}));
 router.get('/datastores',          handle(getDatastores));
 router.get('/alerts',              handle(getAlerts));
 router.get('/networks',            handle(getNetworks));

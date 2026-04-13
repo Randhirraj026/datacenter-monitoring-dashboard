@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS hosts (
   host_name TEXT NOT NULL UNIQUE,
   total_cores INTEGER NOT NULL DEFAULT 0,
   total_memory_gb INTEGER NOT NULL DEFAULT 0,
+  connection_state TEXT NOT NULL DEFAULT 'CONNECTED',
+  power_state TEXT NOT NULL DEFAULT 'POWERED_ON',
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -16,6 +18,10 @@ CREATE TABLE IF NOT EXISTS virtual_machines (
   vm_name TEXT NOT NULL UNIQUE,
   host_id BIGINT REFERENCES hosts(id),
   status TEXT NOT NULL DEFAULT 'STOPPED',
+  cpu_count INTEGER NOT NULL DEFAULT 0,
+  memory_mib INTEGER NOT NULL DEFAULT 0,
+  last_host_name TEXT,
+  last_power_state TEXT,
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   source_created_at TIMESTAMPTZ,
@@ -143,6 +149,40 @@ CREATE TABLE IF NOT EXISTS ilo_storage_metrics (
   drive_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS smtp_settings (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  smtp_host TEXT NOT NULL DEFAULT '',
+  smtp_port INTEGER NOT NULL DEFAULT 587,
+  smtp_user TEXT NOT NULL DEFAULT '',
+  smtp_password TEXT NOT NULL DEFAULT '',
+  sender_email TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  ssl_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  alert_recipient_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  cc_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  bcc_emails TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS alert_rules (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  cpu_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 85,
+  memory_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 85,
+  disk_usage_threshold NUMERIC(5,2) NOT NULL DEFAULT 90,
+  temperature_threshold NUMERIC(5,2) NOT NULL DEFAULT 35,
+  power_failure_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_added_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_removed_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  vm_power_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  host_down_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  rdu_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  dashboard_parameter_change_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_hosts_active_name
   ON hosts (is_active, host_name);
 
@@ -233,4 +273,3 @@ SELECT
 FROM virtual_machines vm
 LEFT JOIN hosts h ON h.id = vm.host_id
 WHERE vm.is_deleted = FALSE;
-

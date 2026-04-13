@@ -11,6 +11,7 @@ import StorageSection from '../components/dashboard/StorageSection'
 import PowerSection from '../components/dashboard/PowerSection'
 import ILOSection from '../components/dashboard/ILOSection'
 import NetworkSection from '../components/dashboard/NetworkSection'
+import RDUSection from '../components/dashboard/RDUSection'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useCardAnimation } from '../hooks/useCardAnimation'
 import { getServerDisplayName } from '../services/ipMapper'
@@ -60,6 +61,7 @@ export default function DashboardPage() {
         <PowerSection data={data} />
         <ILOSection data={data} />
         <NetworkSection data={{ ...data, serverNames: serverNames.length ? serverNames : ['Server 1', 'Server 2', 'Server 3'] }} />
+        <RDUSection data={data} />
       </main>
 
       <Footer />

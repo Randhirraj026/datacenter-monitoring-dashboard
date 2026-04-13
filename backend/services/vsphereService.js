@@ -13,6 +13,7 @@
  */
 
 const https = require('https');
+const { getRecentAlertSnapshots, isDbConfigured } = require('../db');
 
 const VC_HOST    = process.env.VCENTER_HOST     || '10.10.10.151';
 const VC_USER    = process.env.VCENTER_USER     || 'administrator@vsphere.local';
@@ -175,8 +176,7 @@ async function soapBulkFetch(moType, pathSets) {
                 console.log('[SOAP propSet sample]:', pb.replace(/\n/g,' ').slice(0,300));
             }
             // Try every known vSphere SOAP property name tag variant
-            const nameM = pb.match(/<n>([^<]+)<\/n>/)
-                       || pb.match(/<n>([^<]+)<\/name>/)
+            const nameM = pb.match(/<name>([^<]+)<\/name>/)
                        || pb.match(/<n>([^<]+)<\/n>/);
             const valM = pb.match(/<val[^>]*>([\s\S]*?)<\/val>/);
             if (nameM && valM) {
@@ -244,8 +244,7 @@ async function soapFetchHostDirect(moRef) {
     while ((pm = psRe.exec(r.body)) !== null) {
         const pb = pm[1];
         // Try every known tag name for property name in SOAP response
-        const nameM = pb.match(/<n>([^<]+)<\/n>/)
-                   || pb.match(/<name>([^<]+)<\/name>/)
+        const nameM = pb.match(/<name>([^<]+)<\/name>/)
                    || pb.match(/<n>([^<]+)<\/n>/);
         const valM  = pb.match(/<val[^>]*>([\s\S]*?)<\/val>/);
         if (nameM && valM) {
@@ -341,8 +340,9 @@ async function getHosts() {
 }
 
 // ── VMs ───────────────────────────────────────────────────────────
-async function getVMs() {
-    const cached = fromCache('vms');
+async function getVMs(options = {}) {
+    const { forceRefresh = false } = options;
+    const cached = forceRefresh ? null : fromCache('vms');
     if (cached) return cached;
     try {
         // Build hostMoRef → hostName map from REST
@@ -426,7 +426,7 @@ async function getVMs() {
         return toCache('vms', { total: rawVMs.length, running, stopped, suspended, list });
     } catch(err) {
         console.error('[vSphere] getVMs error:', err.message);
-        return { total:0, running:0, stopped:0, suspended:0, list:[] };
+        return { total:0, running:0, stopped:0, suspended:0, list:[], error: err.message };
     }
 }
 
@@ -495,6 +495,18 @@ async function getRealtime() {
 async function getAlerts() {
     const cached = fromCache('alerts');
     if (cached) return cached;
+
+    if (isDbConfigured()) {
+        try {
+            const alerts = await getRecentAlertSnapshots(20);
+            if (alerts.length) {
+                return toCache('alerts', { alerts });
+            }
+        } catch (error) {
+            console.warn('[vSphere] DB alert fetch failed:', error.message);
+        }
+    }
+
     const alerts=[], now=new Date().toISOString();
     try {
         const {hosts} = await getHosts();
