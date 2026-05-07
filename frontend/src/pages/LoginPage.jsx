@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { login, setAuthSession } from '../services/api'
 import BackgroundAnimation from '../components/ui/BackgroundAnimation'
+import dnnlogo from '../assets/Images/dnnlogo.png'
+
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -57,7 +59,7 @@ export default function LoginPage() {
           />
 
           <div className="mb-8 text-center">
-            <img src="/dnnlogo.png" alt="Kristellar DNN" className="mx-auto h-[110px] w-[300px] object-contain" />
+            <img src={dnnlogo} alt="Kristellar DNN" className="mx-auto h-[110px] w-[300px] object-contain" />
           </div>
 
           {error && (

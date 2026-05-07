@@ -42,7 +42,7 @@ function coerceCsvValue(value) {
         if ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'))) {
             return JSON.parse(value);
         }
-    } catch (_error) {
+    } catch {
         return value;
     }
 

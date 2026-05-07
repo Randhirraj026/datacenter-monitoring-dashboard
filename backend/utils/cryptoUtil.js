@@ -38,8 +38,8 @@ function decryptValue(value) {
         ]);
 
         return decrypted.toString('utf8');
-    } catch (_error) {
-        throw new Error('Stored SMTP password could not be decrypted. Please re-enter and save the SMTP password again.');
+    } catch (error) {
+        throw new Error('Stored SMTP password could not be decrypted. Please re-enter and save the SMTP password again.', { cause: error });
     }
 }
 

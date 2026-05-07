@@ -4,6 +4,7 @@ import {
   fetchDatastores, fetchAlerts, fetchILO, fetchPowerHistory, fetchRduSummary
 } from '../services/api'
 import { POLL_INTERVAL_MS } from '../constants/config'
+import { getUniqueHostDisplayName } from '../services/ipMapper'
 
 const INITIAL = {
   cpuPct: null, cpuCores: null, cpuSpeed: null, hostsOnline: null,
@@ -120,6 +121,7 @@ export function useDashboardData() {
         memUsedGB: host.usedMemoryGB ?? null,
         memTotalGB: host.totalMemoryGB ?? null,
         connectionState: host.connectionState,
+        displayName: getUniqueHostDisplayName(host, hostList),
       }))
 
       const iloServers = iloData?.servers || []
@@ -177,7 +179,7 @@ export function useDashboardData() {
       const { getServerDisplayName } = await import('../services/ipMapper')
       const serverNames = iloServers.length > 0
         ? iloServers.slice(0, 3).map((server, index) => getServerDisplayName(server, index, mappedHosts))
-        : mappedHosts.slice(0, 3).map((host, index) => host.name || `Server ${index + 1}`)
+        : mappedHosts.slice(0, 3).map((host, index) => host.displayName || host.name || `Server ${index + 1}`)
 
       setData({
         cpuPct: cpu,

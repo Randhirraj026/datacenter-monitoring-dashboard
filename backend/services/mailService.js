@@ -73,6 +73,7 @@ async function sendMail(message = {}) {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
     });
 
     return info;

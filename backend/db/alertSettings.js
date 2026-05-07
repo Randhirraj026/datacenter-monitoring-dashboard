@@ -155,14 +155,9 @@ async function saveSmtpSettings(payload = {}) {
     }
 
     await ensureDefaultRows();
-    let smtpPassword = '';
-
-    if (payload.smtpPassword) {
-        smtpPassword = encryptValue(payload.smtpPassword);
-    } else {
-        const existingResult = await pool.query('SELECT smtp_password FROM smtp_settings WHERE id = 1');
-        smtpPassword = existingResult.rows[0]?.smtp_password || '';
-    }
+    const smtpPassword = payload.smtpPassword
+        ? encryptValue(payload.smtpPassword)
+        : (await pool.query('SELECT smtp_password FROM smtp_settings WHERE id = 1')).rows[0]?.smtp_password || '';
 
     await pool.query(`
         INSERT INTO smtp_settings (
@@ -303,7 +298,7 @@ async function getPreviousSnapshotState() {
             WHERE is_deleted = FALSE
         `),
         pool.query(`
-            SELECT ts, power_cut_active, mains_status, rdu_status, active_alarm_count, alerts
+            SELECT ts, power_cut_active, mains_status, rdu_status, active_alarm_count, alerts, sensors
             FROM rdu_snapshots
             ORDER BY ts DESC
             LIMIT 1
@@ -349,6 +344,7 @@ async function getPreviousSnapshotState() {
                 rduStatus: rduResult.rows[0].rdu_status,
                 activeAlarmCount: Number(rduResult.rows[0].active_alarm_count || 0),
                 alerts: Array.isArray(rduResult.rows[0].alerts) ? rduResult.rows[0].alerts : [],
+                sensors: Array.isArray(rduResult.rows[0].sensors) ? rduResult.rows[0].sensors : [],
             }
             : null,
     };

@@ -39,6 +39,7 @@ function buildQuery(params = {}) {
 async function apiGet(path) {
   try {
     const res = await fetch(`${API}${path}`, {
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeader(),
@@ -90,6 +91,11 @@ export async function fetchSuperAdminDashboard() {
   return apiGet('/superadmin/dashboard')
 }
 
+export async function fetchRecentAlerts() {
+  const data = await apiGet('/alerts/recent')
+  return data || []
+}
+
 export async function fetchAlertConfiguration() {
   return apiGet('/alerts/config')
 }
@@ -102,8 +108,85 @@ export async function updateAlertRules(payload) {
   return apiRequest('/alerts/rules', 'PUT', payload)
 }
 
+export async function fetchBiometricEmployees() {
+  return apiGet('/biometric/employees')
+}
+
+export async function fetchUnknownFaces(limit = 25) {
+  try {
+    const res = await fetch(`http://${window.location.hostname}:5000/unknown_list`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch (error) {
+    console.error("Error fetching unknown faces from Flask:", error)
+    return []
+  }
+}
+
+export async function fetchUnknownFaceImage(unknownFaceId) {
+  // The Flask backend already provides the full image_path in the record.
+  // We just need to construct the URL to the /unknown route we added.
+  // We'll return the URL directly instead of a blob since it's publicly accessible on the Flask server.
+  return null; // This is handled in the UI now by constructing the URL from the filename
+}
+
+export async function upsertBiometricEmployee(payload) {
+  return apiRequest('/biometric/employees', 'PUT', payload)
+}
+
+export async function addBiometricEmployeeWithPhoto(payload) {
+  return apiRequest('/biometric/add-employee', 'POST', payload)
+}
+
+export async function addBiometricEmployeePhoto(employeeId, payload) {
+  return apiRequest(`/biometric/employees/${encodeURIComponent(employeeId)}/photos`, 'POST', payload)
+}
+
+export async function fetchBiometricEmployeePhoto(employeeId) {
+  const res = await fetch(`${API}/biometric/employees/${encodeURIComponent(employeeId)}/photo`, {
+    headers: getAuthHeader(),
+  })
+
+  if (res.status === 401) {
+    clearAuthSession()
+    window.location.href = '/login'
+    return null
+  }
+
+  if (!res.ok) return null
+
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
+export async function deleteBiometricEmployee(id) {
+  return apiRequest(`/biometric/employees/${id}`, 'DELETE')
+}
+
 export async function sendAlertTestEmail() {
   return apiRequest('/alerts/test-email', 'POST')
+}
+
+export async function reviewUnknownFace(payload) {
+  // Payload: { unknown_face_id, employee_id, name, department, approved }
+  try {
+    const res = await fetch(`http://${window.location.hostname}:5000/assign_employee`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        unknown_id: payload.unknown_face_id,
+        employee_id: payload.employee_id,
+        image_path: payload.image_path // We'll need to pass this through
+      })
+    })
+    return await res.json()
+  } catch (error) {
+    throw new Error("Failed to reach Flask backend for assignment")
+  }
+}
+
+export async function captureLiveUnknownFace() {
+  return apiRequest('/biometric/capture-unknown', 'POST')
 }
 
 function pad2(value) {

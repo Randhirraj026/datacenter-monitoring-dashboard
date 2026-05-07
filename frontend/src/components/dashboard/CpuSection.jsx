@@ -7,7 +7,8 @@ import ProgressBar from '../ui/ProgressBar'
 import SectionHeader from '../ui/SectionHeader'
 import HostDetailsModal from '../ui/HostDetailsModal'
 import HistoryRangeSelect from '../ui/HistoryRangeSelect'
-import { mapIpName } from '../../services/ipMapper'
+import { mapIpName, getUniqueHostDisplayName } from '../../services/ipMapper'
+import { formatWholePercent } from '../../services/numberFormat'
 import { average, filterRowsByRange, latestByKey } from '../../services/superAdminHistory'
 
 export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange }) {
@@ -32,6 +33,7 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
       name: row.hostName,
       cpuPct: row.cpuUsagePct,
       memPct: row.memoryUsagePct,
+      displayName: getUniqueHostDisplayName({ name: row.hostName, hostId: row.hostId }, data.hosts || []),
     }))
   }, [cpuChartRange, data.hosts, historyRows, hostMetaMap])
   const statusHosts = useMemo(() => {
@@ -42,6 +44,7 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
       name: row.hostName,
       cpuPct: row.cpuUsagePct,
       memPct: row.memoryUsagePct,
+      displayName: getUniqueHostDisplayName({ name: row.hostName, hostId: row.hostId }, data.hosts || []),
     }))
   }, [cpuStatusRange, data.hosts, historyRows, hostMetaMap])
 
@@ -50,7 +53,7 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
     if (!ctx) return
     if (!chartHosts.length) return
 
-    const labels = chartHosts.map((h, i) => mapIpName(h.name) || `Host ${i + 1}`)
+    const labels = chartHosts.map((h, i) => h.displayName || mapIpName(h.name) || `Host ${i + 1}`)
     const cpuData = chartHosts.map((h) => h.cpuPct ?? 0)
     const memData = chartHosts.map((h) => h.memPct ?? 0)
 
@@ -101,6 +104,7 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
   const cpuPct = overallRows.length ? average(overallRows, 'cpuUsagePct') : (data.cpuPct ?? 0)
   const badgeVariant = getBadgeVariant(cpuPct, 70, 90)
   const badgeLabel = cpuPct >= 90 ? 'Critical' : cpuPct >= 70 ? 'High' : 'Normal'
+  const formatPct = (value) => formatWholePercent(value).replace('%', '')
 
   return (
     <section className="mb-12">
@@ -114,7 +118,7 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
           />
           <GaugeChart
             pct={cpuPct}
-            value={cpuPct != null ? `${cpuPct}%` : '-'}
+            value={formatWholePercent(cpuPct)}
             label="Average Load"
             gradientId="cpuGradient"
             gradientColors={['#0066ff', '#00c2ff']}
@@ -160,13 +164,13 @@ export default function CpuSection({ data = {}, getHistoryRange, setHistoryRange
                   <div className="h-2 w-2 rounded-full animate-led" style={{ background: '#00c853', boxShadow: '0 0 6px #00c853' }} />
                   <div className="h-2 w-2 rounded-full animate-led" style={{ background: '#0066ff', boxShadow: '0 0 6px #0066ff', animationDelay: '.3s' }} />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-bold text-gray-800">{mapIpName(h.name) || `Host ${i + 1}`}</div>
-                  <div className="mt-0.5 text-xs text-gray-500">CPU: {h.cpuPct ?? '-'}% | Mem: {h.memPct ?? '-'}%</div>
-                  <ProgressBar pct={h.cpuPct ?? 0} color="#0066ff" className="mt-1.5" />
+                  <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-bold text-gray-800">{h.displayName || mapIpName(h.name) || `Host ${i + 1}`}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">CPU: {formatPct(h.cpuPct)}% | Mem: {formatPct(h.memPct)}%</div>
+                  <ProgressBar pct={Number(h.cpuPct ?? 0)} color="#0066ff" className="mt-1.5" />
                 </div>
                 <div className="flex-shrink-0 text-right">
-                  <div className="text-sm font-bold text-blue-600">{h.cpuPct ?? '-'}%</div>
+                  <div className="text-sm font-bold text-blue-600">{formatPct(h.cpuPct)}%</div>
                   <div className="text-xs text-gray-400">CPU</div>
                 </div>
               </div>

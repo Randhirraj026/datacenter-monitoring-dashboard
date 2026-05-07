@@ -5,7 +5,7 @@ import GaugeChart from '../ui/GaugeChart'
 import Badge from '../ui/Badge'
 import SectionHeader from '../ui/SectionHeader'
 import HistoryRangeSelect from '../ui/HistoryRangeSelect'
-import { getServerDisplayName, mapIpName } from '../../services/ipMapper'
+import { getServerDisplayName, getUniqueHostDisplayName, mapIpName } from '../../services/ipMapper'
 import { average, filterRowsByRange, latestByKey } from '../../services/superAdminHistory'
 
 Chart.register(...registerables)
@@ -114,6 +114,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
   const iloServers = latestPowerRows.map((row, index) => {
     const hostName = getHostNameById(row.hostId) || row.hostName
     return {
+      displayName: getUniqueHostDisplayName({ name: hostName, hostId: row.hostId }, data.hosts || []),
       serverName: getServerDisplayName(
         { serverName: hostName, name: hostName, ip: row.ip, hostId: row.hostId },
         index,
@@ -176,7 +177,7 @@ export default function PowerSection({ data = {}, getHistoryRange, setHistoryRan
             )}
             {iloServers.map((s, si) => (
               <div key={s.serverName || si} className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
-                <div className="mb-4 text-sm font-bold text-gray-800">{mapIpName(s.serverName || `Server ${si + 1}`)}</div>
+                <div className="mb-4 text-sm font-bold text-gray-800">{s.displayName || mapIpName(s.serverName || `Server ${si + 1}`)}</div>
                 <div className="rounded-lg border border-gray-200 bg-white p-3">
                   <div className="text-xs font-bold text-gray-700 mb-1">Recorded Draw</div>
                   <div className="text-base font-extrabold text-green-600">{s.powerKw != null ? `${s.powerKw} kW` : '-'}</div>

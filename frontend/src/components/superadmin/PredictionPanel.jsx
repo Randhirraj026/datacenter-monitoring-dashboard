@@ -25,6 +25,7 @@ export default function PredictionPanel({ hostOptions }) {
   const checkRisk = () => {
     if (!predictions.length) return 'Normal operations expected.';
     const maxVal = Math.max(...predictions.map((point) => point.value));
+    const displayMaxVal = metric === 'cpu' || metric === 'memory' ? Math.round(maxVal) : maxVal.toFixed(1);
     const thresholds = {
       cpu: 90,
       memory: 92,
@@ -33,7 +34,7 @@ export default function PredictionPanel({ hostOptions }) {
     };
 
     if (maxVal > thresholds[metric]) {
-      return `Risk Alert! Predicted peak hits ${maxVal.toFixed(1)} which exceeds critical threshold.`;
+      return `Risk Alert! Predicted peak hits ${displayMaxVal} which exceeds critical threshold.`;
     }
 
     return 'Normal operations expected. No risk detected.';
@@ -152,7 +153,7 @@ export default function PredictionPanel({ hostOptions }) {
           </div>
         ) : (
           <div className="rounded-[24px] border border-slate-100/50 bg-white p-4 shadow-sm">
-            <PredictionChart historicalData={history} predictedData={predictions} showPredictions={showPredictions} />
+            <PredictionChart metric={metric} historicalData={history} predictedData={predictions} showPredictions={showPredictions} />
 
             <div className={`mt-6 flex items-center gap-4 rounded-2xl border p-4 transition-colors ${riskDetected ? 'border-red-100 bg-red-50' : 'border-green-100 bg-green-50/50'}`}>
               <span className={`flex h-10 w-10 items-center justify-center rounded-full text-xl font-black text-white shadow-sm ${riskDetected ? 'bg-red-500' : 'bg-green-500'}`}>

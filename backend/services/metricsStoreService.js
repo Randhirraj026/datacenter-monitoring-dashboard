@@ -15,7 +15,7 @@ async function collectAndStoreSnapshot() {
     if (!isDbConfigured()) return false;
 
     const [hostsData, vmsData, datastoresData, iloPayload, alertsData, networksData, rduPayload] = await Promise.all([
-        getHosts(),
+        getHosts({ forceRefresh: true }),
         getVMs(),
         getDatastores(),
         fetchAllILO(),

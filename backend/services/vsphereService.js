@@ -156,31 +156,23 @@ async function soapBulkFetch(moType, pathSets) {
     console.log(`[vSphere SOAP] ${moType} response bytes:`, r.body.length);
 
     const results = {};
-    const retRe = /<returnval>([\s\S]*?)<\/returnval>/g;
-    let retM;
-    let _firstPropLog = true;
-    while ((retM = retRe.exec(r.body)) !== null) {
-        const block = retM[1];
-        const objM  = block.match(/<obj[^>]*>([^<]+)<\/obj>/);
-        if (!objM) continue;
-        const moRef = objM[1].trim();
+    const objRe = /<objects>([\s\S]*?)<\/objects>/g;
+    let objM;
+    while ((objM = objRe.exec(r.body)) !== null) {
+        const block = objM[1];
+        const moRefM = block.match(/<obj[^>]*>([^<]+)<\/obj>/);
+        if (!moRefM) continue;
+        const moRef = moRefM[1].trim();
         results[moRef] = {};
 
         const psRe = /<propSet>([\s\S]*?)<\/propSet>/g;
         let psM;
         while ((psM = psRe.exec(block)) !== null) {
             const pb = psM[1];
-            // Log one raw propSet block so we can see the exact XML tag vSphere uses
-            if (_firstPropLog) {
-                _firstPropLog = false;
-                console.log('[SOAP propSet sample]:', pb.replace(/\n/g,' ').slice(0,300));
-            }
-            // Try every known vSphere SOAP property name tag variant
-            const nameM = pb.match(/<name>([^<]+)<\/name>/)
-                       || pb.match(/<n>([^<]+)<\/n>/);
+            const nameM = pb.match(/<name>([^<]+)<\/name>/) || pb.match(/<n>([^<]+)<\/n>/);
             const valM = pb.match(/<val[^>]*>([\s\S]*?)<\/val>/);
             if (nameM && valM) {
-                results[moRef][nameM[1].trim()] = valM[1].replace(/<[^>]+>/g,'').trim();
+                results[moRef][nameM[1].trim()] = valM[1].replace(/<[^>]+>/g, '').trim();
             }
         }
     }
@@ -188,7 +180,7 @@ async function soapBulkFetch(moType, pathSets) {
     const count = Object.keys(results).length;
     console.log(`[vSphere SOAP] Parsed ${count} ${moType} objects`);
     if (count > 0) {
-        const [k,v] = Object.entries(results)[0];
+        const [k, v] = Object.entries(results)[0];
         console.log(`[vSphere SOAP] Sample ${k}:`, JSON.stringify(v));
     } else {
         console.warn('[vSphere SOAP] 0 objects parsed. Raw snippet:', r.body.slice(0, 600));
@@ -196,7 +188,7 @@ async function soapBulkFetch(moType, pathSets) {
     return results;
 }
 
-const num    = (v, f=0) => { const n = parseFloat(v); return isNaN(n) ? f : n; };
+const num = (v, f = 0) => { const n = parseFloat(v); return isNaN(n) ? f : n; };
 const gbToTB = gb => gb ? Math.round(gb / 1024 * 100) / 100 : 0;
 
 
@@ -256,13 +248,24 @@ async function soapFetchHostDirect(moRef) {
 }
 
 // ── HOSTS ─────────────────────────────────────────────────────────
-async function getHosts() {
-    const cached = fromCache('hosts');
+async function getHosts(options = {}) {
+    const { forceRefresh = false } = options;
+    const cached = forceRefresh ? null : fromCache('hosts');
     if (cached) return cached;
     try {
         const data     = await vcGet('/rest/vcenter/host');
         const rawHosts = data.value || [];
         console.log('[vSphere] REST hosts:', rawHosts.map(h=>`${h.name}(${h.host})`).join(', '));
+
+        const directDetails = {};
+        await Promise.all(rawHosts.map(async (h) => {
+            try {
+                directDetails[h.host] = await soapFetchHostDirect(h.host);
+            } catch (error) {
+                console.warn('[vSphere] Direct SOAP failed for', h.host, error.message);
+                directDetails[h.host] = {};
+            }
+        }));
 
         // Strategy 1: SOAP bulk traversal
         let soap = {};
@@ -279,6 +282,11 @@ async function getHosts() {
         // Strategy 2: Direct SOAP per-host for any missing
         for (const h of rawHosts) {
             if (!soap[h.host] || Object.keys(soap[h.host]).length === 0) {
+                if (directDetails[h.host] && Object.keys(directDetails[h.host]).length > 0) {
+                    soap[h.host] = directDetails[h.host];
+                    continue;
+                }
+
                 console.log('[vSphere] Direct SOAP for', h.name, h.host);
                 try { soap[h.host] = await soapFetchHostDirect(h.host); }
                 catch(e) { console.warn('[vSphere] Direct SOAP failed for', h.host, e.message); }
@@ -298,14 +306,17 @@ async function getHosts() {
                         soap[h.host]['summary.hardware.memorySize']   = String((d.memory_size_MiB || 0) * 1048576);
                         console.log('[vSphere] /api/vcenter/host', h.name, ':', d.cpu_cores, 'cores', d.memory_size_MiB, 'MiB');
                     }
-                } catch(_) {}
+                } catch { /* ignore properties fetch error */ }
             }
         }
 
         const hosts = rawHosts.map(h => {
             const hostId = h.host || '';
             const name   = h.name || hostId;
-            const sp     = soap[hostId] || {};
+            const sp     = {
+                ...(soap[hostId] || {}),
+                ...(directDetails[hostId] || {}),
+            };
 
             const cpuCores    = num(sp['summary.hardware.numCpuCores']);
             const cpuSpeedMHz = num(sp['summary.hardware.cpuMhz']);
@@ -316,8 +327,12 @@ async function getHosts() {
 
             const cpuCap = cpuCores * cpuSpeedMHz;
             const memCap = totalMemGB * 1024;
-            const cpuPct = (cpuCap>0&&cpuUseMHz>0) ? Math.min(100,Math.round(cpuUseMHz/cpuCap*100)) : 0;
-            const memPct = (memCap>0&&memUseMiB>0) ? Math.min(100,Math.round(memUseMiB/memCap*100)) : 0;
+            const cpuPct = (cpuCap > 0 && cpuUseMHz > 0)
+                ? Number(Math.min(100, (cpuUseMHz / cpuCap) * 100).toFixed(2))
+                : 0;
+            const memPct = (memCap > 0 && memUseMiB > 0)
+                ? Number(Math.min(100, (memUseMiB / memCap) * 100).toFixed(2))
+                : 0;
 
             console.log(`[vSphere] ${name}(${hostId}): ${cpuCores}c@${cpuSpeedMHz}MHz ${totalMemGB}GB CPU${cpuPct}% MEM${memPct}% [${Object.keys(sp).length} soap props]`);
 
@@ -329,6 +344,8 @@ async function getHosts() {
                 totalMemoryGB:      totalMemGB,
                 cpuUsagePercent:    cpuPct,
                 memoryUsagePercent: memPct,
+                cpuUsageMHz:        cpuUseMHz,
+                memoryUsageMiB:     memUseMiB,
             };
         });
 
@@ -352,7 +369,7 @@ async function getVMs(options = {}) {
             const hd = await vcGet('/rest/vcenter/host');
             rawHosts = hd.value || [];
             rawHosts.forEach(h => { if (h.host && h.name) hostNameMap[h.host] = h.name; });
-        } catch(_) {}
+        } catch { /* ignore host fetch error */ }
         console.log('[vSphere] hostNameMap:', JSON.stringify(hostNameMap));
 
         // Strategy 1: SOAP bulk fetch — gets runtime.host (host MoRef) for every VM
@@ -384,7 +401,7 @@ async function getVMs(options = {}) {
                     (hVMs.value || []).forEach(v => {
                         if (v.vm && !vmHostMap[v.vm]) vmHostMap[v.vm] = h.host;
                     });
-                } catch(_) {}
+                } catch { /* ignore per-host VM list fetch error */ }
             }
             console.log('[vSphere] REST fallback vmHostMap entries:', Object.keys(vmHostMap).length);
         }
@@ -464,7 +481,7 @@ async function getRealtime() {
     const cached = fromCache('realtime');
     if (cached) return cached;
     try {
-        const [hd, vd, dd] = await Promise.all([getHosts(), getVMs(), getDatastores()]);
+        const [hd, vd, dd] = await Promise.all([getHosts({ forceRefresh: true }), getVMs(), getDatastores()]);
         const hosts = hd.hosts || [];
         const totalCores  = hosts.reduce((s,h) => s+(h.cpuCores||0), 0);
         const totalMemGB  = hosts.reduce((s,h) => s+(h.totalMemoryGB||0), 0);
@@ -473,8 +490,12 @@ async function getRealtime() {
         const memH = hosts.filter(h => h.memoryUsagePercent > 0);
         return toCache('realtime', {
             compute: {
-                cpuUsagePercent:    cpuH.length ? Math.min(100,Math.round(cpuH.reduce((s,h)=>s+h.cpuUsagePercent,0)/cpuH.length)) : 0,
-                memoryUsagePercent: memH.length ? Math.min(100,Math.round(memH.reduce((s,h)=>s+h.memoryUsagePercent,0)/memH.length)) : 0,
+                cpuUsagePercent: cpuH.length
+                    ? Number(Math.min(100, cpuH.reduce((s, h) => s + h.cpuUsagePercent, 0) / cpuH.length).toFixed(2))
+                    : 0,
+                memoryUsagePercent: memH.length
+                    ? Number(Math.min(100, memH.reduce((s, h) => s + h.memoryUsagePercent, 0) / memH.length).toFixed(2))
+                    : 0,
                 totalMemoryGB: totalMemGB, cpuSpeedGHz: avgSpeedGHz, totalCores,
             },
             storage:     { usagePercent: dd.overallUsagePct||0, totalTB: dd.totalCapacityTB||0, usedTB: dd.totalUsedTB||0 },
@@ -509,20 +530,20 @@ async function getAlerts() {
 
     const alerts=[], now=new Date().toISOString();
     try {
-        const {hosts} = await getHosts();
+        const {hosts} = await getHosts({ forceRefresh: true });
         hosts.forEach(h => {
             if (h.connectionState!=='CONNECTED') alerts.push({type:'HOST',severity:'critical',message:`Host ${h.name} is ${h.connectionState}`,timestamp:now});
             else if (h.cpuUsagePercent>=90)      alerts.push({type:'PERFORMANCE',severity:'warning',message:`Host ${h.name} CPU at ${h.cpuUsagePercent}%`,timestamp:now});
             else if (h.memoryUsagePercent>=90)   alerts.push({type:'PERFORMANCE',severity:'warning',message:`Host ${h.name} Memory at ${h.memoryUsagePercent}%`,timestamp:now});
         });
-    } catch(_) {}
+    } catch { /* ignore host alerts fetch error */ }
     try {
         const {datastores} = await getDatastores();
         datastores.forEach(d => {
             if (d.usagePercent>=90) alerts.push({type:'STORAGE',severity:'critical',message:`Datastore ${d.name} is ${d.usagePercent}% full`,timestamp:now});
             else if (d.usagePercent>=80) alerts.push({type:'STORAGE',severity:'warning',message:`Datastore ${d.name} is ${d.usagePercent}% full`,timestamp:now});
         });
-    } catch(_) {}
+    } catch { /* ignore datastore alerts fetch error */ }
     if (!alerts.length) alerts.push({type:'SYSTEM',severity:'info',message:'All systems healthy',timestamp:now});
     return toCache('alerts', { alerts });
 }
@@ -534,7 +555,7 @@ async function getNetworks() {
     try {
         const d = await vcGet('/rest/vcenter/network');
         return toCache('networks', { networks: (d.value||[]).map(n=>({name:n.name||'Network',type:n.type||'STANDARD_PORTGROUP'})) });
-    } catch(err) { return { networks:[] }; }
+    } catch { return { networks: [] }; }
 }
 
 module.exports = { getRealtime, getHosts, getVMs, getDatastores, getAlerts, getNetworks };

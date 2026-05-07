@@ -12,12 +12,13 @@ import PowerSection from '../components/dashboard/PowerSection'
 import ILOSection from '../components/dashboard/ILOSection'
 import NetworkSection from '../components/dashboard/NetworkSection'
 import RDUSection from '../components/dashboard/RDUSection'
+import DataCenterAccess from '../components/dashboard/DataCenterAccess'
 import { useDashboardData } from '../hooks/useDashboardData'
 import { useCardAnimation } from '../hooks/useCardAnimation'
 import { getServerDisplayName } from '../services/ipMapper'
 import { POLL_INTERVAL_MS } from '../constants/config'
 
-export default function DashboardPage() {
+export default function DashboardPage() { 
   const { data, status, lastUpdate } = useDashboardData()
   const containerRef = useCardAnimation([data])
   const [liveClock, setLiveClock] = useState(() =>
@@ -62,6 +63,7 @@ export default function DashboardPage() {
         <ILOSection data={data} />
         <NetworkSection data={{ ...data, serverNames: serverNames.length ? serverNames : ['Server 1', 'Server 2', 'Server 3'] }} />
         <RDUSection data={data} />
+        <DataCenterAccess />
       </main>
 
       <Footer />

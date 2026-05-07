@@ -33,8 +33,8 @@ const VERTIV_SIGNAL_META = {
     },
     '7|907|3': { name: 'Return Air Temp', unit: 'C', kind: 'number' },
     '7|907|4': { name: 'Supply Air Temp', unit: 'C', kind: 'number' },
-    '4|502|280': { name: 'Smoke Sensor 1', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
-    '4|502|281': { name: 'Smoke Sensor 2', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
+    '4|502|280': { name: 'Smoke Sensor', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
+    '4|502|281': { name: 'WL Sensor ', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
     '4|502|282': { name: 'Front Door', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
     '4|502|283': { name: 'Rear Door', unit: '', kind: 'enum', options: ['Normal', 'Alarm'] },
     '4|502|544': { name: 'Hooter', unit: '', kind: 'enum', options: ['Open', 'Close'] },
@@ -89,18 +89,21 @@ function roundMetric(value, digits = 1) {
 }
 
 function formatSensorDisplay(sensor) {
-    if (!sensor) return '–';
+    if (!sensor) return '-';
 
     if (typeof sensor.value === 'number' && Number.isFinite(sensor.value)) {
         const rounded = roundMetric(sensor.value);
-        if (sensor.unit === '%' || sensor.unit === '℃' || sensor.unit === 'C' || sensor.unit === 'min') {
-            const unit = sensor.unit === 'C' ? '°C' : sensor.unit;
+        if (sensor.unit === '%' || sensor.unit === 'C' || sensor.unit === 'min') {
+            if (sensor.unit === 'C') {
+                return `${rounded}\u00B0C`;
+            }
+            const unit = sensor.unit;
             return `${rounded}${unit === 'min' ? ` ${unit}` : unit}`;
         }
         return `${rounded}${sensor.unit || ''}`.trim();
     }
 
-    return sensor.displayValue ?? sensor.rawValue ?? '–';
+    return sensor.displayValue ?? sensor.rawValue ?? '-';
 }
 
 function decodeVertivValue(meta, rawValue) {
@@ -290,20 +293,313 @@ function parseVertivSampleTable(text, equipId, equipTypeId) {
         .filter(Boolean);
 }
 
+function isNumericValue(value) {
+    return value != null && value !== '' && Number.isFinite(Number(value));
+}
+
+function getSensorCategory(sensor = {}) {
+    const name = String(sensor.name || '').toLowerCase();
+    const key = String(sensor.key || '').toLowerCase();
+
+    if (name.includes('door') || key.includes('door')) return 'door';
+    if (name.includes('smoke')) return 'smoke';
+    if (name.includes('humidity')) return 'humidity';
+    if (name.includes('temp') || name.includes('temperature') || name.includes('air')) return 'temperature';
+    if (name.includes('battery')) return 'battery';
+    if (name.includes('power supply') || name.includes('input status') || name.includes('mains')) return 'power';
+    if (name.includes('hooter') || name.includes('led')) return 'signal';
+    return 'general';
+}
+
+function getThresholdLabel(category, numericValue) {
+    if (!isNumericValue(numericValue)) return null;
+    if (category === 'temperature') return '>= 35 \u00B0C';
+    if (category === 'humidity') return '>= 70 %';
+    if (category === 'batteryRuntime') return '<= 10 min';
+    if (category === 'batteryPct') return '<= 20 %';
+    return null;
+}
+
+function evaluateSensorState(sensor = {}) {
+    const category = getSensorCategory(sensor);
+    const numericValue = isNumericValue(sensor.value) ? Number(sensor.value) : null;
+    const rawStatus = String(sensor.displayValue || sensor.rawValue || sensor.value || '').toLowerCase();
+    const alarmLevel = Number(sensor.alarmLevel || 0);
+    const isValid = Number(sensor.isValid ?? 1);
+    const isConfigured = Number(sensor.isConfigured ?? 1);
+
+    if (!isConfigured || !isValid || rawStatus.includes('offline') || rawStatus.includes('invalid') || rawStatus.includes('error')) {
+        return {
+            category,
+            state: 'offline',
+            severity: 'critical',
+            status: 'Offline',
+            message: 'Sensor is offline or invalid',
+            alertType: 'offline',
+            thresholdLabel: null,
+        };
+    }
+
+    if (category === 'door') {
+        const isOpen = alarmLevel > 0 || rawStatus.includes('alarm') || rawStatus.includes('open');
+        return {
+            category,
+            state: isOpen ? 'critical' : 'normal',
+            severity: isOpen ? 'critical' : 'info',
+            status: isOpen ? 'Open' : 'Closed',
+            message: isOpen ? 'Door is open' : 'Door is closed',
+            alertType: isOpen ? 'door-open' : 'door-closed',
+            thresholdLabel: 'Closed',
+        };
+    }
+
+    if (category === 'smoke') {
+        const isAlarm = alarmLevel > 0 || rawStatus.includes('alarm');
+        return {
+            category,
+            state: isAlarm ? 'critical' : 'normal',
+            severity: isAlarm ? 'critical' : 'info',
+            status: isAlarm ? 'Alarm' : 'Normal',
+            message: isAlarm ? 'Smoke detection alarm active' : 'Smoke sensor normal',
+            alertType: isAlarm ? 'smoke-alarm' : 'smoke-normal',
+            thresholdLabel: 'Normal',
+        };
+    }
+
+    if (category === 'temperature') {
+        if (!isNumericValue(numericValue)) {
+            const warning = alarmLevel > 0;
+            return {
+                category,
+                state: warning ? 'warning' : 'normal',
+                severity: warning ? 'warning' : 'info',
+                status: warning ? 'Warning' : 'Normal',
+                message: warning ? 'Temperature alert reported' : 'Temperature sensor normal',
+                alertType: warning ? 'temperature-warning' : 'temperature-normal',
+                thresholdLabel: null,
+            };
+        }
+
+        if (numericValue >= 40) {
+            return {
+                category,
+                state: 'critical',
+                severity: 'critical',
+                status: 'Critical',
+                message: 'Temperature exceeded critical threshold',
+                alertType: 'temperature-high',
+                thresholdLabel: getThresholdLabel('temperature', numericValue),
+            };
+        }
+
+        if (numericValue >= 35) {
+            return {
+                category,
+                state: 'warning',
+                severity: 'warning',
+                status: 'Warning',
+                message: 'Temperature exceeded warning threshold',
+                alertType: 'temperature-high',
+                thresholdLabel: getThresholdLabel('temperature', numericValue),
+            };
+        }
+
+        return {
+            category,
+            state: 'normal',
+            severity: 'info',
+            status: 'Normal',
+            message: 'Temperature within normal range',
+            alertType: 'temperature-normal',
+            thresholdLabel: getThresholdLabel('temperature', numericValue),
+        };
+    }
+
+    if (category === 'humidity') {
+        if (!isNumericValue(numericValue)) {
+            const warning = alarmLevel > 0;
+            return {
+                category,
+                state: warning ? 'warning' : 'normal',
+                severity: warning ? 'warning' : 'info',
+                status: warning ? 'Warning' : 'Normal',
+                message: warning ? 'Humidity alert reported' : 'Humidity sensor normal',
+                alertType: warning ? 'humidity-warning' : 'humidity-normal',
+                thresholdLabel: null,
+            };
+        }
+
+        if (numericValue >= 85) {
+            return {
+                category,
+                state: 'critical',
+                severity: 'critical',
+                status: 'Critical',
+                message: 'Humidity exceeded critical threshold',
+                alertType: 'humidity-high',
+                thresholdLabel: getThresholdLabel('humidity', numericValue),
+            };
+        }
+
+        if (numericValue >= 70) {
+            return {
+                category,
+                state: 'warning',
+                severity: 'warning',
+                status: 'Warning',
+                message: 'Humidity exceeded warning threshold',
+                alertType: 'humidity-high',
+                thresholdLabel: getThresholdLabel('humidity', numericValue),
+            };
+        }
+
+        return {
+            category,
+            state: 'normal',
+            severity: 'info',
+            status: 'Normal',
+            message: 'Humidity within normal range',
+            alertType: 'humidity-normal',
+            thresholdLabel: getThresholdLabel('humidity', numericValue),
+        };
+    }
+
+    if (category === 'battery') {
+        if (!isNumericValue(numericValue)) {
+            const warning = alarmLevel > 0;
+            return {
+                category,
+                state: warning ? 'warning' : 'normal',
+                severity: warning ? 'warning' : 'info',
+                status: warning ? 'Warning' : 'Normal',
+                message: warning ? 'Battery alert reported' : 'Battery sensor normal',
+                alertType: warning ? 'battery-warning' : 'battery-normal',
+                thresholdLabel: null,
+            };
+        }
+
+        if (/runtime/i.test(String(sensor.name || ''))) {
+            if (numericValue <= 10) {
+                return {
+                    category,
+                    state: 'critical',
+                    severity: 'critical',
+                    status: 'Critical',
+                    message: 'UPS runtime is critically low',
+                    alertType: 'battery-runtime-low',
+                    thresholdLabel: getThresholdLabel('batteryRuntime', numericValue),
+                };
+            }
+
+            if (numericValue <= 30) {
+                return {
+                    category,
+                    state: 'warning',
+                    severity: 'warning',
+                    status: 'Warning',
+                    message: 'UPS runtime is running low',
+                    alertType: 'battery-runtime-low',
+                    thresholdLabel: getThresholdLabel('batteryRuntime', numericValue),
+                };
+            }
+        }
+
+        if (numericValue <= 10) {
+            return {
+                category,
+                state: 'critical',
+                severity: 'critical',
+                status: 'Critical',
+                message: 'Battery capacity is critically low',
+                alertType: 'battery-low',
+                thresholdLabel: getThresholdLabel('batteryPct', numericValue),
+            };
+        }
+
+        if (numericValue <= 20) {
+            return {
+                category,
+                state: 'warning',
+                severity: 'warning',
+                status: 'Warning',
+                message: 'Battery capacity is below warning threshold',
+                alertType: 'battery-low',
+                thresholdLabel: getThresholdLabel('batteryPct', numericValue),
+            };
+        }
+
+        return {
+            category,
+            state: 'normal',
+            severity: 'info',
+            status: 'Normal',
+            message: 'Battery capacity within normal range',
+            alertType: 'battery-normal',
+            thresholdLabel: getThresholdLabel('batteryPct', numericValue),
+        };
+    }
+
+    if (category === 'power') {
+        const abnormal = /on battery|shutdown|bypass|fault|alarm/i.test(rawStatus);
+        return {
+            category,
+            state: abnormal ? 'warning' : 'normal',
+            severity: abnormal ? 'warning' : 'info',
+            status: abnormal ? 'Warning' : 'Normal',
+            message: abnormal ? 'Power state is abnormal' : 'Power state normal',
+            alertType: abnormal ? 'power-state-warning' : 'power-state-normal',
+            thresholdLabel: null,
+        };
+    }
+
+    const hasAlarm = alarmLevel > 0 || rawStatus.includes('alarm');
+    return {
+        category,
+        state: hasAlarm ? 'warning' : 'normal',
+        severity: hasAlarm ? 'warning' : 'info',
+        status: hasAlarm ? 'Warning' : 'Normal',
+        message: hasAlarm ? 'Sensor reports an alarm state' : 'Sensor normal',
+        alertType: hasAlarm ? 'sensor-warning' : 'sensor-normal',
+        thresholdLabel: null,
+    };
+}
+
 function buildVertivAlerts(sensors, alarmCount) {
     const alerts = [];
+    const now = new Date().toISOString();
 
     sensors.forEach((sensor) => {
-        if (sensor.alarmLevel > 0) {
-            alerts.push({
-                id: `${sensor.key}-alarm`,
-                title: `${sensor.name} alert`,
-                severity: sensor.alarmLevel >= 2 ? 'critical' : 'warning',
-                status: 'active',
-                timestamp: null,
-                source: 'rdu',
-            });
-        }
+        const state = String(sensor.state || '').toLowerCase();
+        if (state === 'normal') return;
+
+        const title = sensor.category === 'door' && state === 'critical'
+            ? `${sensor.name} Open`
+            : sensor.category === 'smoke' && state === 'critical'
+                ? `${sensor.name} Alarm`
+                : sensor.category === 'temperature' && state !== 'normal'
+                    ? `${sensor.name} High`
+                    : sensor.category === 'humidity' && state !== 'normal'
+                        ? `${sensor.name} High`
+                        : sensor.category === 'battery' && state !== 'normal'
+                            ? `${sensor.name} Low`
+                            : sensor.category === 'power' && state !== 'normal'
+                                ? `${sensor.name} Warning`
+                                : `${sensor.name} Alert`;
+
+        alerts.push({
+            id: `${sensor.key}-${sensor.alertType || state || 'alert'}`,
+            title,
+            message: sensor.message || `${sensor.name} requires attention`,
+            severity: sensor.severity || (state === 'critical' ? 'critical' : state === 'warning' ? 'warning' : 'info'),
+            status: 'active',
+            timestamp: now,
+            source: 'rdu',
+            sensorName: sensor.name,
+            sensorKey: sensor.key,
+            category: sensor.category,
+            state,
+            value: sensor.displayValue ?? sensor.value ?? '-',
+        });
     });
 
     const powerSupply = getSensor(sensors, '5|4031|25');
@@ -314,44 +610,52 @@ function buildVertivAlerts(sensors, alarmCount) {
     if (powerSupply && !/utility online/i.test(String(powerSupply.value))) {
         alerts.push({
             id: 'ups-power-supply',
-            title: `UPS power state: ${powerSupply.displayValue}`,
+            title: `UPS Power State: ${powerSupply.displayValue}`,
+            message: 'UPS power supply is not on utility online',
             severity: /shutdown/i.test(String(powerSupply.value)) ? 'critical' : 'warning',
             status: 'active',
-            timestamp: null,
+            timestamp: now,
             source: 'rdu',
+            category: 'power',
         });
     }
 
     if (inputStatus && !/utility online/i.test(String(inputStatus.value))) {
         alerts.push({
             id: 'ups-input-status',
-            title: `UPS input status: ${inputStatus.displayValue}`,
+            title: `UPS Input Status: ${inputStatus.displayValue}`,
+            message: 'UPS input status is not utility online',
             severity: /shutdown/i.test(String(inputStatus.value)) ? 'critical' : 'warning',
             status: 'active',
-            timestamp: null,
+            timestamp: now,
             source: 'rdu',
+            category: 'power',
         });
     }
 
     if (doorFront && /alarm/i.test(String(doorFront.value))) {
         alerts.push({
             id: 'front-door-alert',
-            title: 'Front door alert',
-            severity: 'warning',
+            title: 'Front Door Open',
+            message: 'Front door is open',
+            severity: 'critical',
             status: 'active',
-            timestamp: null,
+            timestamp: now,
             source: 'rdu',
+            category: 'door',
         });
     }
 
     if (doorRear && /alarm/i.test(String(doorRear.value))) {
         alerts.push({
             id: 'rear-door-alert',
-            title: 'Rear door alert',
-            severity: 'warning',
+            title: 'Rear Door Open',
+            message: 'Rear door is open',
+            severity: 'critical',
             status: 'active',
-            timestamp: null,
+            timestamp: now,
             source: 'rdu',
+            category: 'door',
         });
     }
 
@@ -359,10 +663,12 @@ function buildVertivAlerts(sensors, alarmCount) {
         alerts.push({
             id: 'rdu-active-alarm-count',
             title: `${alarmCount} active RDU alarms reported`,
+            message: `${alarmCount} active RDU alarms reported`,
             severity: alarmCount > 1 ? 'warning' : 'info',
             status: 'active',
-            timestamp: null,
+            timestamp: now,
             source: 'rdu',
+            category: 'summary',
         });
     }
 
@@ -473,7 +779,6 @@ async function fetchVertivCgiSummary(config, options = {}) {
             ? /on battery|shutdown/i.test(String(inputStatus.value))
             : null;
 
-    const alerts = buildVertivAlerts(parsedSensors, alarmCount);
     const mergedSensors = [
         ...envSamplerSensors.filter((sensor) => [5, 68, 9, 72].includes(sensor.signalId)).map((sensor) => ({
             ...sensor,
@@ -488,14 +793,35 @@ async function fetchVertivCgiSummary(config, options = {}) {
         ...parsedSensors.filter((sensor) => !['-99|501|5', '-99|501|68', '-99|501|9', '-99|501|72'].includes(sensor.key)),
     ];
 
-    const normalizedSensors = mergedSensors.map((sensor, index) => ({
-        id: `vertiv-sensor-${index + 1}`,
-        name: sensor.name,
-        value: formatSensorDisplay(sensor),
-        unit: sensor.unit,
-        status: sensor.alarmLevel > 0 ? 'Alarm' : sensor.isValid > 0 ? 'OK' : 'Invalid',
-        source: 'vertiv-cgi',
-    }));
+    const normalizedSensors = mergedSensors.map((sensor, index) => {
+        const diagnostics = evaluateSensorState(sensor);
+        const displayValue = formatSensorDisplay(sensor);
+
+        return {
+            id: `vertiv-sensor-${index + 1}`,
+            key: sensor.key,
+            name: sensor.name,
+            value: displayValue,
+            displayValue,
+            unit: sensor.unit,
+            rawValue: sensor.rawValue,
+            numericValue: isNumericValue(sensor.value) ? Number(sensor.value) : null,
+            alarmLevel: sensor.alarmLevel,
+            isValid: sensor.isValid,
+            isConfigured: sensor.isConfigured,
+            valueFormat: sensor.valueFormat,
+            dataType: sensor.dataType,
+            timestamp: sensor.timestamp,
+            category: diagnostics.category,
+            state: diagnostics.state,
+            severity: diagnostics.severity,
+            status: diagnostics.status,
+            message: diagnostics.message,
+            alertType: diagnostics.alertType,
+            thresholdLabel: diagnostics.thresholdLabel,
+            source: 'vertiv-cgi',
+        };
+    });
 
     const result = {
         ok: true,
@@ -515,7 +841,7 @@ async function fetchVertivCgiSummary(config, options = {}) {
             mainsStatus: inputStatus?.displayValue ?? null,
             rduStatus: powerSupply?.displayValue ?? 'Connected',
         },
-        alerts,
+        alerts: buildVertivAlerts(normalizedSensors, alarmCount),
         sensors: normalizedSensors,
         raw: {
             overview: overviewText,

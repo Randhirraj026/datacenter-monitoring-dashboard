@@ -71,11 +71,146 @@ function normalizeRduAlerts(alerts = []) {
         .sort();
 }
 
+function getRduSensorLabel(sensor = {}) {
+    return sensor.name || sensor.title || sensor.key || 'RDU sensor';
+}
+
+function buildRduSensorMessage(sensor = {}, previousSensor = null) {
+    const label = getRduSensorLabel(sensor);
+    const currentState = String(sensor.state || '').toLowerCase();
+    const previousState = String(previousSensor?.state || '').toLowerCase();
+
+    if (sensor.category === 'door') {
+        if (currentState === 'critical') return `${label} opened`;
+        if (previousState === 'critical' && currentState === 'normal') return `${label} closed`;
+    }
+
+    if (currentState === 'offline') {
+        return `${label} is offline`;
+    }
+
+    if (currentState === 'critical') {
+        return `${label} reached a critical state`;
+    }
+
+    if (currentState === 'warning') {
+        return `${label} crossed a warning threshold`;
+    }
+
+    if (previousState && previousState !== 'normal' && currentState === 'normal') {
+        return `${label} recovered`;
+    }
+
+    return `${label} is normal`;
+}
+
+function buildRduSensorEvents(currentRdu, previousRdu, now) {
+    const events = [];
+    const currentSensors = Array.isArray(currentRdu?.sensors) ? currentRdu.sensors : [];
+    const previousSensors = new Map((Array.isArray(previousRdu?.sensors) ? previousRdu.sensors : []).map((sensor) => [sensor.key || sensor.name, sensor]));
+
+    for (const sensor of currentSensors) {
+        const key = sensor.key || sensor.name;
+        if (!key) continue;
+
+        const previousSensor = previousSensors.get(key) || null;
+        const currentState = String(sensor.state || '').toLowerCase();
+        const previousState = String(previousSensor?.state || '').toLowerCase();
+        const category = String(sensor.category || '').toLowerCase();
+
+        if (category === 'power' && Boolean(currentRdu?.metrics?.powerCutActive)) {
+            continue;
+        }
+
+        if (currentState === previousState) {
+            continue;
+        }
+
+        if (currentState === 'normal') {
+            if (previousState === 'critical' && category === 'door') {
+                events.push({
+                    type: 'RDU_DOOR_CLOSED',
+                    subject: `RDU ALERT - ${getRduSensorLabel(sensor)} Closed`,
+                    details: {
+                        Sensor: getRduSensorLabel(sensor),
+                        Message: buildRduSensorMessage(sensor, previousSensor),
+                        'Current Value': sensor.displayValue || sensor.value || 'Unknown',
+                        Time: now,
+                    },
+                });
+            } else if (previousState && previousState !== 'normal') {
+                events.push({
+                    type: 'RDU_SENSOR_RECOVERED',
+                    subject: `RDU ALERT - ${getRduSensorLabel(sensor)} Recovered`,
+                    details: {
+                        Sensor: getRduSensorLabel(sensor),
+                        Message: buildRduSensorMessage(sensor, previousSensor),
+                        'Current Value': sensor.displayValue || sensor.value || 'Unknown',
+                        Time: now,
+                    },
+                });
+            }
+            continue;
+        }
+
+        if (category === 'door' && currentState === 'critical') {
+            events.push({
+                type: 'RDU_DOOR_OPEN',
+                subject: `RDU ALERT - ${getRduSensorLabel(sensor)} Opened`,
+                details: {
+                    Sensor: getRduSensorLabel(sensor),
+                    Message: buildRduSensorMessage(sensor, previousSensor),
+                    'Current Value': sensor.displayValue || sensor.value || 'Open',
+                    Time: now,
+                },
+            });
+            continue;
+        }
+
+        if (currentState === 'offline') {
+            events.push({
+                type: 'RDU_SENSOR_FAILURE',
+                subject: `RDU ALERT - ${getRduSensorLabel(sensor)} Offline`,
+                details: {
+                    Sensor: getRduSensorLabel(sensor),
+                    Message: buildRduSensorMessage(sensor, previousSensor),
+                    'Current Value': sensor.displayValue || sensor.value || 'Offline',
+                    Time: now,
+                },
+            });
+            continue;
+        }
+
+        if (currentState === 'critical' || currentState === 'warning') {
+            events.push({
+                type: currentState === 'critical' ? 'RDU_SENSOR_FAILURE' : 'RDU_SENSOR_WARNING',
+                subject: `RDU ALERT - ${getRduSensorLabel(sensor)} ${currentState === 'critical' ? 'Critical' : 'Warning'}`,
+                details: {
+                    Sensor: getRduSensorLabel(sensor),
+                    Message: buildRduSensorMessage(sensor, previousSensor),
+                    'Current Value': sensor.displayValue || sensor.value || 'Unknown',
+                    Time: now,
+                },
+            });
+        }
+    }
+
+    return events;
+}
+
 function getSeverityLabel(event) {
     const subject = String(event?.subject || '').toUpperCase();
     const type = String(event?.type || '').toUpperCase();
 
-    if (subject.includes('CRITICAL') || subject.includes('POWER FAILURE') || type.includes('HOST_DOWN') || type.includes('POWER_FAILURE') || type.includes('RDU_ALERT')) {
+    if (
+        subject.includes('CRITICAL')
+        || subject.includes('POWER FAILURE')
+        || type.includes('HOST_DOWN')
+        || type.includes('POWER_FAILURE')
+        || type.includes('RDU_DOOR_OPEN')
+        || type.includes('RDU_SENSOR_FAILURE')
+        || type.includes('RDU_ALARM_COUNT')
+    ) {
         return {
             label: 'CRITICAL',
             bannerBg: '#fef2f2',
@@ -86,7 +221,12 @@ function getSeverityLabel(event) {
         };
     }
 
-    if (subject.includes('CHANGE') || type.includes('SPIKE') || type.includes('CHANGE')) {
+    if (
+        subject.includes('CHANGE')
+        || type.includes('SPIKE')
+        || type.includes('CHANGE')
+        || type.includes('WARNING')
+    ) {
         return {
             label: 'WARNING',
             bannerBg: '#fff7ed',
@@ -145,10 +285,10 @@ function buildEvents({ currentSnapshot, previousState, rules }) {
     const currentVmNames = new Set((currentVmList || []).map((vm) => vm.name));
     const addedCandidates = Array.isArray(currentSnapshot.vmChanges?.added)
         ? currentSnapshot.vmChanges.added
-        : null;
+        : []; 
     const deletedCandidates = Array.isArray(currentSnapshot.vmChanges?.deleted)
         ? currentSnapshot.vmChanges.deleted
-        : null;
+        : []; // Force empty array to prevent internal fallback if DB sync is skipped
     const previousRdu = previousState?.rdu || null;
     const currentRdu = currentSnapshot.rduPayload || null;
 
@@ -299,8 +439,8 @@ function buildEvents({ currentSnapshot, previousState, rules }) {
         }
     }
 
-    if (rules.vmAddedAlertEnabled && currentVmList) {
-        const vmAddedList = addedCandidates || currentVmList.filter((vm) => !previousVmNames.has(vm.name));
+    if (rules.vmAddedAlertEnabled && Array.isArray(addedCandidates)) {
+        const vmAddedList = addedCandidates;
 
         for (const vm of vmAddedList) {
             events.push({
@@ -345,12 +485,8 @@ function buildEvents({ currentSnapshot, previousState, rules }) {
         }
     }
 
-    if (rules.vmRemovedAlertEnabled && currentVmList) {
-        const vmRemovedList = deletedCandidates
-            ? deletedCandidates
-            : Array.from(previousVmNames)
-                .filter((vmName) => !currentVmNames.has(vmName))
-                .map((vmName) => ({ name: vmName, ...(previousVmMap.get(vmName) || {}) }));
+    if (rules.vmRemovedAlertEnabled && Array.isArray(deletedCandidates)) {
+        const vmRemovedList = deletedCandidates;
 
         for (const deletedVm of vmRemovedList) {
             if (deletedVm?.name) {
@@ -385,27 +521,28 @@ function buildEvents({ currentSnapshot, previousState, rules }) {
                     'Mains Status': currentRdu?.metrics?.mainsStatus || 'Unknown',
                     Time: now,
                 },
-            });
+                });
         }
     }
 
     if (currentRdu && rules.rduAlertEnabled) {
         const currentAlarmCount = Number(currentRdu?.raw?.activeAlarmCount || currentRdu?.metrics?.activeAlarmCount || 0);
         const previousAlarmCount = Number(previousRdu?.activeAlarmCount || 0);
-        const currentAlerts = normalizeRduAlerts(currentRdu.alerts || []);
-        const previousAlerts = normalizeRduAlerts(previousRdu?.alerts || []);
+        const rduEvents = buildRduSensorEvents(currentRdu, previousRdu, now);
 
-        if (currentAlarmCount > previousAlarmCount || currentAlerts.join('|') !== previousAlerts.join('|')) {
-            currentAlerts.forEach((alertTitle) => {
-                events.push({
-                    type: 'RDU_ALERT',
-                    subject: 'CRITICAL ALERT - RDU Alarm Detected',
-                    details: {
-                        Alert: alertTitle,
-                        'Alarm Count': currentAlarmCount,
-                        Time: now,
-                    },
-                });
+        if (rduEvents.length) {
+            events.push(...rduEvents);
+        } else if (currentAlarmCount > previousAlarmCount) {
+            const firstAlert = Array.isArray(currentRdu.alerts) ? currentRdu.alerts[0] : null;
+            events.push({
+                type: 'RDU_ALARM_COUNT',
+                subject: 'CRITICAL ALERT - RDU Alarm Count Increased',
+                details: {
+                    Message: firstAlert?.message || firstAlert?.title || 'RDU reported a new abnormal condition',
+                    Alert: firstAlert?.title || firstAlert?.message || 'RDU alarm',
+                    'Alarm Count': currentAlarmCount,
+                    Time: now,
+                },
             });
         }
     }

@@ -126,7 +126,7 @@ const initialRulesForm = {
   dashboardParameterChangeEnabled: true,
 }
 
-export default function AlertSettingsPanel() {
+export default function AlertSettingsPanel({ children }) {
   const [smtpForm, setSmtpForm] = useState(initialSmtpForm)
   const [rulesForm, setRulesForm] = useState(initialRulesForm)
   const [loading, setLoading] = useState(true)
@@ -255,101 +255,105 @@ export default function AlertSettingsPanel() {
     <>
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
-      <section className="mb-8 grid gap-6 xl:grid-cols-[1.2fr_1fr]">
-        <div className="rounded-[30px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-black tracking-tight text-slate-950">Mail Alert & SMTP Settings</h2>
-              <p className="mt-1 text-sm text-slate-500">Configure SMTP delivery, recipients, and alert transport controls.</p>
+      <section className="mb-12 grid gap-6 xl:grid-cols-[1.2fr_1fr] items-start">
+        <div className="flex flex-col gap-6 pr-2">
+          <div className="rounded-[30px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-slate-950">Mail Alert & SMTP Settings</h2>
+                <p className="mt-1 text-sm text-slate-500">Configure SMTP delivery, recipients, and alert transport controls.</p>
+              </div>
+              <div className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                {loading ? 'Loading...' : 'Superadmin'}
+              </div>
             </div>
-            <div className="rounded-2xl bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-              {loading ? 'Loading...' : 'Superadmin'}
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">SMTP Host</span>
+                <input value={smtpForm.smtpHost} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpHost: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="smtp.office365.com" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">SMTP Port</span>
+                <input type="number" value={smtpForm.smtpPort} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpPort: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="587" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">SMTP Username</span>
+                <input value={smtpForm.smtpUser} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpUser: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="alerts@datacenter.com" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">SMTP Password</span>
+                <input type="password" value={smtpForm.smtpPassword} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpPassword: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder={smtpForm.hasPassword ? 'Saved password retained unless replaced' : 'Enter SMTP password'} />
+                <span className="text-xs text-slate-500">
+                  {smtpForm.hasPassword
+                    ? 'Leave this blank to keep the saved password. Test mail will use the saved password automatically.'
+                    : 'Enter the SMTP password once, save it, and future tests can reuse it.'}
+                </span>
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">Sender Email</span>
+                <input value={smtpForm.senderEmail} onChange={(e) => setSmtpForm((c) => ({ ...c, senderEmail: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="alerts@datacenter.com" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">Sender Name</span>
+                <input value={smtpForm.senderName} onChange={(e) => setSmtpForm((c) => ({ ...c, senderName: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="Data Center Monitor" />
+              </label>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-3">
+              <label className="flex flex-col gap-2 lg:col-span-1">
+                <span className="text-sm font-bold text-slate-700">Alert recipient emails</span>
+                <textarea value={smtpForm.alertRecipientEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, alertRecipientEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="ops@datacenter.com&#10;infra@datacenter.com" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">CC emails</span>
+                <textarea value={smtpForm.ccEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, ccEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="manager@datacenter.com" />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-sm font-bold text-slate-700">BCC emails</span>
+                <textarea value={smtpForm.bccEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, bccEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="audit@datacenter.com" />
+              </label>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <ToggleField
+                label="Enable SSL/TLS"
+                description="Use secure SMTP transport for encrypted mail delivery."
+                checked={smtpForm.sslEnabled}
+                onChange={(value) => setSmtpForm((current) => ({ ...current, sslEnabled: value }))}
+              />
+              <ToggleField
+                label="Enable Alerts"
+                description="Master switch for automatic email alerts from the monitoring engine."
+                checked={smtpForm.alertsEnabled}
+                onChange={(value) => setSmtpForm((current) => ({ ...current, alertsEnabled: value }))}
+              />
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleTestMail}
+                disabled={loading || testingMail}
+                className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {testingMail ? 'Sending Test Email...' : 'Send Test Email'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSmtp}
+                disabled={loading || smtpSaving}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {smtpSaving ? 'Saving Configuration...' : 'Save Configuration'}
+              </button>
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">SMTP Host</span>
-              <input value={smtpForm.smtpHost} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpHost: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="smtp.office365.com" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">SMTP Port</span>
-              <input type="number" value={smtpForm.smtpPort} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpPort: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="587" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">SMTP Username</span>
-              <input value={smtpForm.smtpUser} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpUser: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="alerts@datacenter.com" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">SMTP Password</span>
-              <input type="password" value={smtpForm.smtpPassword} onChange={(e) => setSmtpForm((c) => ({ ...c, smtpPassword: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder={smtpForm.hasPassword ? 'Saved password retained unless replaced' : 'Enter SMTP password'} />
-              <span className="text-xs text-slate-500">
-                {smtpForm.hasPassword
-                  ? 'Leave this blank to keep the saved password. Test mail will use the saved password automatically.'
-                  : 'Enter the SMTP password once, save it, and future tests can reuse it.'}
-              </span>
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">Sender Email</span>
-              <input value={smtpForm.senderEmail} onChange={(e) => setSmtpForm((c) => ({ ...c, senderEmail: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="alerts@datacenter.com" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">Sender Name</span>
-              <input value={smtpForm.senderName} onChange={(e) => setSmtpForm((c) => ({ ...c, senderName: e.target.value }))} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="Data Center Monitor" />
-            </label>
-          </div>
-
-          <div className="mt-5 grid gap-4 lg:grid-cols-3">
-            <label className="flex flex-col gap-2 lg:col-span-1">
-              <span className="text-sm font-bold text-slate-700">Alert recipient emails</span>
-              <textarea value={smtpForm.alertRecipientEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, alertRecipientEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="ops@datacenter.com&#10;infra@datacenter.com" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">CC emails</span>
-              <textarea value={smtpForm.ccEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, ccEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="manager@datacenter.com" />
-            </label>
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-bold text-slate-700">BCC emails</span>
-              <textarea value={smtpForm.bccEmails} onChange={(e) => setSmtpForm((c) => ({ ...c, bccEmails: e.target.value }))} rows={5} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-blue-500" placeholder="audit@datacenter.com" />
-            </label>
-          </div>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <ToggleField
-              label="Enable SSL/TLS"
-              description="Use secure SMTP transport for encrypted mail delivery."
-              checked={smtpForm.sslEnabled}
-              onChange={(value) => setSmtpForm((current) => ({ ...current, sslEnabled: value }))}
-            />
-            <ToggleField
-              label="Enable Alerts"
-              description="Master switch for automatic email alerts from the monitoring engine."
-              checked={smtpForm.alertsEnabled}
-              onChange={(value) => setSmtpForm((current) => ({ ...current, alertsEnabled: value }))}
-            />
-          </div>
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={handleTestMail}
-              disabled={loading || testingMail}
-              className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {testingMail ? 'Sending Test Email...' : 'Send Test Email'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveSmtp}
-              disabled={loading || smtpSaving}
-              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {smtpSaving ? 'Saving Configuration...' : 'Save Configuration'}
-            </button>
-          </div>
+          {children}
         </div>
 
-        <div className="rounded-[30px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">
+        <div className="flex flex-col rounded-[30px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur">
           <div className="mb-6">
             <h2 className="text-2xl font-black tracking-tight text-slate-950">Alert Rules Configuration</h2>
             <p className="mt-1 text-sm text-slate-500">Tune thresholds and event categories that should trigger immediate mail alerts.</p>
@@ -368,11 +372,11 @@ export default function AlertSettingsPanel() {
             <ToggleField label="VM Removed Alert" description="Notify when an existing VM disappears from inventory." checked={rulesForm.vmRemovedAlertEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, vmRemovedAlertEnabled: value }))} />
             <ToggleField label="VM Power On/Off Alert" description="Send alerts when any VM changes power state on any monitored host." checked={rulesForm.vmPowerAlertEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, vmPowerAlertEnabled: value }))} />
             <ToggleField label="Host Down Alert" description="Send immediate alerts when host connection or power state becomes unhealthy." checked={rulesForm.hostDownAlertEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, hostDownAlertEnabled: value }))} />
-            <ToggleField label="RDU Alert" description="Send alerts for critical RDU alarms and environmental issues." checked={rulesForm.rduAlertEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, rduAlertEnabled: value }))} />
+            <ToggleField label="RDU Alert" description="Send alerts for RDU door events, sensor failures, and abnormal rack conditions." checked={rulesForm.rduAlertEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, rduAlertEnabled: value }))} />
             <ToggleField label="Dashboard Parameter Change" description="Trigger alerts for significant spikes and monitored parameter changes." checked={rulesForm.dashboardParameterChangeEnabled} onChange={(value) => setRulesForm((current) => ({ ...current, dashboardParameterChangeEnabled: value }))} />
           </div>
 
-          <div className="mt-6 flex justify-end">
+          <div className="mt-8 flex justify-end">
             <button
               type="button"
               onClick={handleSaveRules}
@@ -384,6 +388,7 @@ export default function AlertSettingsPanel() {
           </div>
         </div>
       </section>
+
     </>
   )
 }

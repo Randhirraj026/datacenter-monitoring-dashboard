@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { mapIpName } from '../../services/ipMapper'
+import { formatWholePercent, roundWholeNumber } from '../../services/numberFormat'
 
 export default function HostDetailsModal({ host, iloServers = [], storageUsedTB, storageTotalTB, isOpen, onClose }) {
   const hostName = host ? mapIpName(host.name) || 'Host' : 'Host'
@@ -15,6 +16,8 @@ export default function HostDetailsModal({ host, iloServers = [], storageUsedTB,
 
   const storageUsed = typeof storageUsedTB === 'number' ? storageUsedTB : null
   const storageTotal = typeof storageTotalTB === 'number' ? storageTotalTB : null
+  const hostMemUsed = host ? roundWholeNumber(host.memUsedGB) : null
+  const hostMemTotal = host ? roundWholeNumber(host.memTotalGB) : null
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -97,10 +100,10 @@ export default function HostDetailsModal({ host, iloServers = [], storageUsedTB,
               <div className="mb-3">
                 <div className="text-xs text-gray-500">RAM Usage</div>
                 <div className="text-sm font-semibold text-gray-800">
-                  {host.memUsedGB != null && host.memTotalGB != null
-                    ? `${host.memUsedGB} GB / ${host.memTotalGB} GB`
+                  {hostMemUsed != null && hostMemTotal != null
+                    ? `${hostMemUsed} GB / ${hostMemTotal} GB`
                     : host.memPct != null
-                      ? `${host.memPct}%`
+                      ? formatWholePercent(host.memPct)
                       : '-'}
                 </div>
               </div>

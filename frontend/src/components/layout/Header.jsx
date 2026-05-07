@@ -1,5 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { logout } from '../../services/api'
+import AlertNotification from './AlertNotification'
+import dnnlogo from '../../assets/Images/dnnlogo.png'
 
 export default function Header({ stats = {} }) {
   const navigate = useNavigate()
@@ -24,7 +26,7 @@ export default function Header({ stats = {} }) {
     >
       <div className="flex items-center gap-4">
         <img
-          src="/dnnlogo.png"
+          src={dnnlogo}
           alt="Kristellar DNN"
           className="h-[72px] w-[160px] object-contain object-center"
         />
@@ -46,17 +48,20 @@ export default function Header({ stats = {} }) {
         ))}
       </div>
 
-      <button
-        onClick={handleLogout}
-        className="rounded-lg px-4 py-1.5 text-xs font-semibold tracking-widest transition-all duration-200 hover:scale-105"
-        style={{
-          background: 'rgba(255,71,87,0.15)',
-          border: '1px solid rgba(255,71,87,0.3)',
-          color: '#ff6b7a',
-        }}
-      >
-        {location.pathname === '/superadmin' ? 'Admin Exit' : 'Logout'}
-      </button>
+      <div className="flex items-center gap-4">
+        <AlertNotification />
+        <button
+          onClick={handleLogout}
+          className="rounded-lg px-4 py-1.5 text-xs font-semibold tracking-widest transition-all duration-200 hover:scale-105"
+          style={{
+            background: 'rgba(255,71,87,0.15)',
+            border: '1px solid rgba(255,71,87,0.3)',
+            color: '#ff6b7a',
+          }}
+        >
+          {location.pathname === '/superadmin' ? 'Admin Exit' : 'Logout'}
+        </button>
+      </div>
     </header>
   )
 }

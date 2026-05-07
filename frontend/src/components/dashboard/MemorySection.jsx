@@ -7,6 +7,7 @@ import Badge, { getBadgeVariant } from '../ui/Badge'
 import SectionHeader from '../ui/SectionHeader'
 import ProgressBar from '../ui/ProgressBar'
 import { mapIpName } from '../../services/ipMapper'
+import { formatWholePercent } from '../../services/numberFormat'
 
 Chart.register(...registerables)
 
@@ -316,9 +317,9 @@ export default function MemorySection({ data = {} }) {
 
           <div className="flex flex-1 flex-col">
             <div className="flex min-h-[285px] items-center justify-center">
-              <GaugeChart
+          <GaugeChart
                 pct={memPct}
-                value={`${memPct}%`}
+                value={formatWholePercent(memPct)}
                 label="Used"
                 gradientId="memGradient"
                 gradientColors={['#c044ff', '#8b3dff']}
@@ -423,7 +424,7 @@ export default function MemorySection({ data = {} }) {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-bold text-gray-800">{row.label}</div>
                       <div className="mt-0.5 text-xs text-gray-500">
-                        Mem: {row.memPct ?? 0}% · Total VMs: {row.total}
+                        Mem: {formatWholePercent(row.memPct ?? 0)} · Total VMs: {row.total}
                       </div>
                       <ProgressBar pct={row.memPct ?? 0} color="#7c3aed" className="mt-1.5" />
                     </div>

@@ -177,7 +177,7 @@ async function getAuthHeaders(ip, user, pass) {
 
         if (resp.status === 400 || resp.status === 401) {
             let b = {};
-            try { b = JSON.parse(resp.body); } catch (_) {}
+            try { b = JSON.parse(resp.body); } catch { /* ignore invalid JSON */ }
             const mid = b?.error?.['@Message.ExtendedInfo']?.[0]?.MessageId || '';
             if (mid.includes('UnauthorizedLoginAttempt')) {
                 console.error(`[iLO] ${ip} ✗ Wrong password — fix ILO_PASS_${ILO_SERVERS.findIndex(s => s.ip === ip) + 1} in .env`);
@@ -205,7 +205,7 @@ async function getAuthHeaders(ip, user, pass) {
         _auth[ip] = { mode: 'basic', basicAuth };
         return { 'Authorization': basicAuth };
     } catch (e) {
-        throw new Error(`Cannot connect to iLO ${ip}: ${e.message}`);
+        throw new Error(`Cannot connect to iLO ${ip}: ${e.message}`, { cause: e });
     }
 }
 

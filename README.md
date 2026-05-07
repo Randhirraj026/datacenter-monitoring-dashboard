@@ -1,255 +1,153 @@
 # Data Center Monitoring Dashboard & AI Forecasting
 
-A high-performance, full-stack operational intelligence platform designed to monitor enterprise IT infrastructure. This system natively integrates with VMware vSphere and HPE iLO to aggregate real-time hardware telemetry and virtual machine lifecycle data. It features a dedicated Machine Learning forecasting layer powered by PyTorch LSTMs to predict cluster performance trends.
+A high-performance, full-stack operational intelligence platform designed to monitor enterprise IT infrastructure with a focus on visual excellence and predictive analytics.
 
-## Core Features
+This system natively integrates with **VMware vSphere**, **HPE iLO**, and **Vertiv RDU** to aggregate real-time hardware telemetry, virtual machine lifecycle data, and environmental metrics into a unified, glassmorphic dashboard.
 
-- **vSphere Integration:** Automatically synchronizes Datastores, VM states, and cluster-wide compute (CPU/Mem) allocations via SOAP and REST APIs.
-- **HPE iLO Redfish API:** Directly polls iLO management ports for physical inlet temperatures, fan speeds, and realtime power consumption (Wattage).
-- **Vertiv RDU Integration:** Supports a configurable backend proxy for Vertiv RDU metrics such as rack front/rear temperature, humidity, AC supply air, UPS battery, runtime, and active alarms.
-- **Time-Series Database Archive:** Background Node.js cron workers continuously snapshot network telemetries into PostgreSQL for historical performance tracking.
-- **Role-Based Access Control:** Secure JWT authentication splitting user views into standard `Admin` (Dashboard) and `SuperAdmin` (Deep diagnostics).
-- **AI/ML Forecasting Module:** A dedicated Python FastAPI microservice trained iteratively on PostgreSQL data to predict next 24-hour and 7-day power/compute trends using an LSTM autoregressive neural network.
+## 🛠️ Prerequisites
 
----
+To ensure proper installation and build stability (especially for the Vite 6 frontend), please verify your environment versions:
 
-## Tech Stack
-- **Frontend:** React, Vite, Tailwind CSS, Chart.js
-- **Backend:** Node.js, Express.js
-- **Database:** PostgreSQL (pg-pool)
-- **ML / AI Service:** Python, FastAPI, PyTorch, scikit-learn, pandas
+- **Node.js**: `v20.x` or `v22.x` (LTS) recommended (Verified on `v24.13.1`).
+- **NPM**: `v10.x` or higher recommended.
+- **Database**: PostgreSQL 14+
 
 ---
 
-## Architecture Overview
+## 🚀 Core Features
 
-The application follows a microservices architecture with three main components:
+### 📡 Multi-Source Integration
+- **vSphere Integration**: Synchronizes Datastores, VM states (Running/Stopped), and cluster-wide compute (CPU/Memory) via SOAP and REST APIs.
+- **HPE iLO Redfish API**: Polls physical server hardware for inlet temperatures, CPU health, and real-time power consumption (Wattage).
+- **Vertiv RDU Monitoring**: Proxies environmental sensors including rack front/rear temperature, humidity, AC supply air, and UPS battery status.
+- **Live Camera Feed**: Real-time HLS streaming of server room surveillance with FFmpeg-driven high-definition processing.
+- **Live Person Detection**: Separate Python service detects people and faces in the surveillance feed so the dashboard still shows a signal when the face-recognition path misses a frame.
 
-1. **Backend (Node.js/Express)**: Handles API endpoints, data collection from vSphere/iLO/RDU, alert processing, and archiving.
-2. **Frontend (React/Vite)**: Provides two dashboards - Admin (real-time monitoring) and SuperAdmin (historical analytics + forecasting).
-3. **ML Service (Python/FastAPI)**: Runs LSTM models for predictive analytics on time-series data.
+### 🔔 Unified Global Notification System
+- **Real-Time Alerts**: A centralized notification bell accessible to all administrators.
+- **VM Lifecycle Tracking**: Instant notifications for VM creation, deletion, and power state changes.
+- **Threshold Monitoring**: Proactive alerts for high CPU, Memory, or Temperature breaches across physical and virtual hosts.
+- **Deduplication Engine**: Intelligent alert buffering to prevent redundant notifications for persistent hardware issues.
 
-### Data Flow
-- **Real-time Collection**: Every 5 seconds, the backend polls vSphere, iLO, and RDU APIs, stores snapshots in PostgreSQL, and triggers alerts.
-- **Archiving**: Weekly cron job exports old data to CSV files in `/archives/` for long-term storage.
-- **Forecasting**: On-demand LSTM training using historical data from DB and archives to predict future metrics.
+### 🛠️ SuperAdmin Configuration & Management
+- **Employee Biometric Management**: Full CRUD interface for managing employee access lists synced with a persistent PostgreSQL database.
+- **Alert Rules Engine**: Granular control over threshold values (CPU%, Memory%, Temp C) and toggle-able system event notifications.
+- **SMTP & Mail Settings**: Integrated mail server configuration with built-in "Send Test Email" functionality for verification.
+- **Historical Analysis**: Customizable date-range filtering using a polished calendar popover to query months of historical performance data.
+
+### 🔮 AI/ML Forecasting Module
+- **Predictive Analytics**: Dedicated Python FastAPI microservice powered by **PyTorch LSTMs**.
+- **Trend Projection**: Autoregressive neural networks predict the next 24-hour and 7-day power/compute trends based on historical snapshot data.
 
 ---
 
-## Folder Structure
+## 💻 Tech Stack
+
+- **Frontend**: React 18, Vite, Vanilla CSS (Premium Glassmorphism), Chart.js
+- **Backend**: Node.js, Express.js, PostgreSQL (pg-pool), Nodemailer
+- **ML Service**: Python 3.10+, FastAPI, PyTorch, Pandas, Scikit-learn
+- **Person Detection Service**: Python 3.10+, FastAPI, OpenCV, NumPy
+- **Video Processing**: FFmpeg (HLS Streaming)
+
+---
+
+## 🏗️ Architecture Overview
+
+The system follows a decoupled microservices architecture:
+
+1.  **Primary Backend (Node.js)**: The central hub for real-time data collection (5-second polling), background snapshotting, and role-based API access.
+2.  **Predictive Engine (Python/FastAPI)**: Independent service specialized in processing time-series data for LSTM model training and inference.
+3.  **Modern Frontend (React)**: High-performance SPA utilizing custom hooks for dual-dashboard support (Admin for real-time, SuperAdmin for analytics).
+
+---
+
+## 📂 Project Structure
+
 ```text
 .
-├── backend/          # Node.js Express server (APIs, vSphere/iLO Workers)
-│   ├── server.js     # Main server initialization
-│   ├── auth.js       # JWT authentication
-│   ├── routes/       # API endpoints (vsphere, ilo, rdu, superadmin, etc.)
-│   ├── services/     # Business logic (vSphere API, iLO polling, alerts, etc.)
-│   ├── schedulers/   # Background jobs (weekly archiving)
-│   ├── db/           # Database connection and schema
-│   └── config/       # Archive table configurations
-├── frontend/         # React SPA (Vite) User Interfaces
-│   ├── src/
-│   │   ├── components/  # Reusable UI components
-│   │   ├── pages/       # Login, Dashboard, SuperAdmin pages
-│   │   ├── hooks/       # Custom React hooks for data fetching
-│   │   ├── services/    # API client functions
-│   │   └── constants/   # Configuration constants
-├── database/         # PostgreSQL schemas and queries
-├── ml_service/       # Python Forecasting Model (FastAPI)
-└── archives/         # CSV exports from weekly archiving
+├── backend/          # Node.js Express server (vSphere/iLO/RDU Workers)
+│   ├── routes/       # API endpoints (Authenticated & Role-based)
+│   ├── services/     # Business logic (vSphere SDK, iLO Redfish, Mail)
+│   ├── db/           # PostgreSQL connection, bootstrap schemas, and mappers
+│   └── schedulers/   # Background jobs (Snapshot collection, Archiving)
+├── frontend/         # React SPA (Vite)
+│   ├── src/pages/    # Admin Dashboard & SuperAdmin Analytics
+│   ├── src/hooks/    # Custom data polling & historical fetchers
+│   └── src/services/ # API integration layer
+├── database/         # PostgreSQL schema definition (superadmin_schema.sql)
+└── ml_service/       # Python Forecasting Microservice (PyTorch LSTM)
 ```
 
 ---
 
-## Backend Components
+## 🛠️ Setup & Installation
 
-### Server Initialization ([server.js](backend/server.js))
-- Initializes Express app with CORS and JWT middleware.
-- Starts background workers: metrics collector (5-sec polling) and archive scheduler (weekly).
-- Exposes health check endpoint.
-
-### Authentication ([auth.js](backend/auth.js))
-- JWT-based auth with 8-hour expiry.
-- Two roles: Admin (dashboard access) and SuperAdmin (full access).
-- Credentials configured via environment variables.
-
-### API Routes
-- **vSphere Routes**: Real-time cluster data (hosts, VMs, datastores, alerts).
-- **iLO Routes**: Physical server health metrics.
-- **RDU Routes**: Rack monitoring data.
-- **SuperAdmin Routes**: Historical data and alert configuration.
-- **Archive Routes**: Access to CSV exports.
-
-### Services
-- **vSphere Service**: Hybrid SOAP/REST API integration with caching and error handling.
-- **iLO Service**: Redfish API polling with serialization to avoid connection limits.
-- **RDU Service**: Proxy for Vertiv RDU data.
-- **Metrics Store**: Background snapshot collection and storage.
-- **Alert Engine**: Anomaly detection and email notifications.
-- **Archive Service**: Weekly CSV export to disk.
-
-### Database
-- PostgreSQL with tables for inventory, metrics, and events.
-- Auto-initialization on startup.
-- Time-series data with proper indexing.
-
----
-
-## Frontend Components
-
-### Pages
-- **LoginPage**: Authentication form.
-- **DashboardPage**: Real-time monitoring for admins.
-- **SuperAdminPage**: Advanced analytics and forecasting.
-
-### Key Hooks
-- **useDashboardData**: 5-second polling for real-time data.
-- **useSuperAdminDashboardData**: Fetches live and historical data.
-- **useSuperAdminHistoricalData**: Parses archived CSV data.
-
-### UI Components
-- Charts using Chart.js for metrics visualization.
-- Responsive design with Tailwind CSS.
-- Animated cards and loading states.
-
----
- 
-## ML Service
-
-### Functionality
-- **LSTM Forecasting**: Trains on historical data to predict CPU, memory, and power usage.
-- **Data Sources**: PostgreSQL snapshots and CSV archives.
-- **Caching**: 1-hour TTL for predictions.
-- **Endpoints**: Single forecast endpoint with parameters for host, metric, and time horizon.
-
----
-
-## Setup & Deployment
-
-### 1. PostgreSQL Database
-You must have a running PostgreSQL instance.
-1. Create a database named `superadmin_db` (or as defined in your environment).
-2. Execute the schema queries found in `database/superadmin_schema.sql` to initialize all required inventory, events, and metrics tables.
-
-### 2. Node.js Backend Server
-This acts as the main proxy and data synchronization pipeline.
+### 1. Database
+Create a PostgreSQL database and initialize it using the provided schema:
 ```bash
-cd backend
-npm install
+psql -U your_user -d your_db -f database/superadmin_schema.sql
 ```
 
-Create a `.env` file in `backend/.env` with your secure credentials:
+### 2. Backend Environment (`backend/.env`)
 ```env
 PORT=3000
-JWT_SECRET=your_secure_hash
-JWT_EXPIRES_IN=8h
+ADMIN_USER=admin
+ADMIN_PASSWORD=your_password
+JWT_SECRET=your_jwt_key
 PGHOST=localhost
-PGPORT=5432
-PGDATABASE=superadmin_db
-PGUSER=root
-PGPASSWORD=secret
-VCENTER_HOST=ip address
-VCENTER_USER=administrator@vsphere.local
-VCENTER_PASSWORD=...
-ILO_HOST_1=ip address
-ILO_PASS_1=...
-```
-Start the service:
-```bash
-npm run dev
+PGDATABASE=your_db
+VCENTER_HOST=...
+ILO_HOST_1=...
+# ... RDU, SMTP, Camera, and Biometric settings
 ```
 
-### 3. Python ML Forecasting Service
-This drives the predictive charting found exclusively on the SuperAdmin dashboard.
+### 3. Services Execution
+**Backend**:
+```bash
+cd backend && npm install && npm run dev
+```
+
+**ML Service**:
 ```bash
 cd ml_service
 python -m venv venv
-source venv/Scripts/activate # (Or venv\bin\activate on Mac/Linux)
+venv\Scripts\activate
 pip install -r requirements.txt
-```
-Ensure you create `ml_service/.env` using the identical PostgreSQL credentials.
-Start the FastAPI server on port 8000:
-```bash
 python main.py
 ```
 
-### Vertiv RDU Setup
-The backend can proxy a Vertiv RDU feed so the browser does not need to talk to the RDU directly.
-
-Add these variables to `backend/.env`:
-```env
-RDU_ENABLED=true
-RDU_BASE_URL=https://your-rdu-ip
-RDU_AUTH_MODE=vertiv_cgi
-RDU_USERNAME=rduadmin
-RDU_PASSWORD=your_password
-RDU_LOGIN_PATH=/cgi-bin/login.cgi
-RDU_DATA_PATH=/cgi-bin/p50_main_page.cgi
-RDU_VERIFY_TLS=false
-```
-
-Notes:
-- For Vertiv RDU-A G2, use `RDU_AUTH_MODE=vertiv_cgi`.
-- This mode logs in through `/cgi-bin/login.cgi` and polls `/cgi-bin/p50_main_page.cgi` for live rack, UPS, AC, and alarm values.
-
-### 4. React Frontend
+**Person Detection Service**:
 ```bash
-cd frontend
-npm install
-npm run dev
+cd person_detection_service
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
 ```
-Navigate to `http://localhost:5173/` in your local browser to access the dashboard.
+Copy `person_detection_service/.env.example` to `person_detection_service/.env` if you want to tune detector thresholds or the service port.
+
+**Frontend**:
+```bash
+cd frontend && npm install && npm run dev
+```
 
 ---
 
-## Key Workflows
+## 📝 Configuration Highlights
 
-### Real-Time Monitoring
-1. Backend polls vSphere/iLO/RDU every 5 seconds.
-2. Stores snapshots in PostgreSQL.
-3. Triggers alerts on anomalies.
-4. Frontend updates dashboards with fresh data.
+### Alert Thresholds
+Configurable via the SuperAdmin "Alert Rules" panel. Default thresholds include:
+- CPU Usage: > 85%
+- Memory Usage: > 85%
+- Temperature: > 35°C
+- Disk Usage: > 90%
 
-### Historical Analysis
-1. SuperAdmin selects date range.
-2. Backend merges data from archives and live DB.
-3. Frontend renders historical charts.
-
-### Forecasting
-1. ML service trains LSTM on historical data.
-2. Predicts future metrics.
-3. Frontend overlays predictions on charts.
-
-### Alerting
-1. Anomalies detected during snapshots.
-2. Emails sent to ops team.
-3. Alerts displayed in UI.
+### SMTP Settings
+Required for email alerts. Supports SSL/TLS and customizable recipient/CC/BCC lists. 
 
 ---
 
-## Configuration
-
-- **Environment Variables**: All sensitive data (credentials, IPs) via `.env` files.
-- **Alert Thresholds**: Configurable via SuperAdmin panel.
-- **Archive Retention**: Default 7 days, configurable.
-- **Polling Intervals**: 5 seconds for real-time, weekly for archiving.
-
----
-
-## Troubleshooting
-
-- **Connection Issues**: Check vSphere/iLO IPs and credentials in `.env`.
-- **Database Errors**: Ensure PostgreSQL is running and schema is initialized.
-- **ML Service**: Verify Python environment and dependencies.
-- **Frontend**: Check console for API errors; ensure backend is running.
-
----
-
-## Contributing
-
-1. Follow the existing code structure.
-2. Add tests for new features.
-3. Update documentation for API changes.
-4. Use environment variables for configuration.
-
-
+## 🤝 Contributing
+1. Ensure `bootstrapSql` in `backend/db/index.js` is updated if the schema changes.
+2. Maintain the Glassmorphic design system using the tokens in `index.css`.
+3. Document all new API endpoints in the `README.md`.

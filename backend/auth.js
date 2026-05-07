@@ -10,7 +10,10 @@ if (!JWT_SECRET) {
 
 function verifyToken(req, res, next) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
-    const token = authHeader?.split(' ')[1];
+    const bearerToken = authHeader?.split(' ')[1];
+    const queryToken = typeof req.query?.access_token === 'string' ? req.query.access_token : '';
+    const headerToken = typeof req.headers['x-access-token'] === 'string' ? req.headers['x-access-token'] : '';
+    const token = bearerToken || headerToken || queryToken;
 
     if (!token) {
         return res.status(401).json({ error: 'Access token required' });

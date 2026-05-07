@@ -1,6 +1,8 @@
+import { formatWholePercent } from '../../services/numberFormat'
+
 const CARDS = [
-  { icon: '🖥️', iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   valueKey: 'cpuPct',     label: 'CPU Usage',      sub: 'vSphere Data', fmt: v => `${v}%`     },
-  { icon: '💾', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', valueKey: 'memPct',     label: 'Memory Usage',   sub: 'vSphere Data', fmt: v => `${v}%`     },
+  { icon: '🖥️', iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   valueKey: 'cpuPct',     label: 'CPU Usage',      sub: 'vSphere Data', fmt: v => formatWholePercent(v) },
+  { icon: '💾', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', valueKey: 'memPct',     label: 'Memory Usage',   sub: 'vSphere Data', fmt: v => formatWholePercent(v) },
   { icon: '💿', iconBg: 'bg-cyan-100',   iconColor: 'text-cyan-600',   valueKey: 'storagePct', label: 'Storage Used',   sub: 'Datastores',   fmt: v => `${v}%`     },
   { icon: '⚡', iconBg: 'bg-green-100',  iconColor: 'text-green-600',  valueKey: 'powerKW',    label: 'Power Draw',     sub: 'From iLO',     fmt: v => `${v} kW`   },
   { icon: '🌡️', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', valueKey: 'inletTemp',  label: 'Avg Inlet Temp', sub: 'From iLO',     fmt: v => `${v}°C`    },

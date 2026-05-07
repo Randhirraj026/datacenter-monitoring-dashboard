@@ -11,6 +11,28 @@ export function mapIpName(val) {
   return out
 }
 
+function getHostLabelParts(host = {}) {
+  const rawName = String(host?.name || host?.hostName || host?.serverName || host?.ip || host?.hostId || '').trim()
+  const mappedName = mapIpName(rawName) || rawName
+  return { rawName, mappedName }
+}
+
+export function getUniqueHostDisplayName(host, allHosts = []) {
+  const { rawName, mappedName } = getHostLabelParts(host)
+  if (!mappedName) return rawName
+
+  const labels = Array.isArray(allHosts)
+    ? allHosts.map((item) => getHostLabelParts(item).mappedName)
+    : []
+  const collisionCount = labels.filter((label) => label === mappedName).length
+
+  if (collisionCount > 1 && rawName && rawName !== mappedName) {
+    return `${mappedName} (${rawName})`
+  }
+
+  return mappedName
+}
+
 // Check if a string is an IP pattern
 export function isIpAddress(val) {
   if (!val) return false

@@ -55,9 +55,20 @@ async function sendTestEmailHandler(_req, res) {
     }
 }
 
+async function getRecentAlertsHandler(_req, res) {
+    const { getRecentAlertSnapshots } = require('../db');
+    try {
+        const alerts = await getRecentAlertSnapshots(20);
+        return res.json(alerts);
+    } catch (error) {
+        console.error('[AlertController][getRecentAlerts]', error.message);
+        return res.status(500).json({ error: error.message });
+    }
+}
 module.exports = {
     getAlertConfigurationHandler,
     saveSmtpSettingsHandler,
     saveAlertRulesHandler,
     sendTestEmailHandler,
+    getRecentAlertsHandler,
 };

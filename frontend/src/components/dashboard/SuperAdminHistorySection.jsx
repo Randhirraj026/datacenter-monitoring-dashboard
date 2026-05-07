@@ -5,6 +5,7 @@ import Badge from '../ui/Badge'
 import SectionHeader from '../ui/SectionHeader'
 import HistoryRangeSelect from '../ui/HistoryRangeSelect'
 import { filterRowsByRange } from '../../services/superAdminHistory'
+import { roundWholeNumber } from '../../services/numberFormat'
 
 function EmptyState({ text }) {
   return <div className="flex h-full items-center justify-center py-16 text-sm text-gray-400">{text}</div>
@@ -28,7 +29,8 @@ function buildSeries(rows, key) {
 
   rows.forEach((row) => {
     const list = grouped.get(row.hostName) || []
-    list.push(row[key])
+    const shouldRound = key === 'cpuUsagePct' || key === 'memoryUsagePct'
+    list.push(shouldRound ? roundWholeNumber(row[key]) : row[key])
     grouped.set(row.hostName, list)
   })
 

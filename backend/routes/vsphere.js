@@ -31,6 +31,7 @@ const { ensureFreshSnapshot } = require('../services/metricsStoreService');
 function handle(fn) {
     return async (req, res) => {
         try {
+            res.set('Cache-Control', 'no-store, max-age=0');
             const data = await fn();
             res.json(data);
         } catch (err) {
@@ -42,7 +43,7 @@ function handle(fn) {
 
 router.get('/datacenter/realtime', handle(getRealtime));
 router.get('/datacenter/power/history', handle(getRecentPowerHistory));
-router.get('/hosts',               handle(getHosts));
+router.get('/hosts',               handle(() => getHosts({ forceRefresh: true })));
 router.get('/vms',                 handle(async () => {
     const data = await getVMs({ forceRefresh: true });
 

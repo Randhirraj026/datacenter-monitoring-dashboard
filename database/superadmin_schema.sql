@@ -149,6 +149,37 @@ CREATE TABLE IF NOT EXISTS ilo_storage_metrics (
   drive_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS rdu_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ok BOOLEAN NOT NULL DEFAULT FALSE,
+  source TEXT,
+  reason TEXT,
+  rack_front_temp_c NUMERIC(6,2),
+  rack_rear_temp_c NUMERIC(6,2),
+  rack_front_humidity_pct NUMERIC(6,2),
+  rack_rear_humidity_pct NUMERIC(6,2),
+  humidity_pct NUMERIC(6,2),
+  ac_supply_air_c NUMERIC(6,2),
+  ac_return_air_c NUMERIC(6,2),
+  power_cut_active BOOLEAN,
+  ups_battery_pct NUMERIC(6,2),
+  ups_battery_minutes_left NUMERIC(10,2),
+  mains_status TEXT,
+  rdu_status TEXT,
+  active_alarm_count INTEGER NOT NULL DEFAULT 0,
+  alerts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  sensors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  raw_payload JSONB
+);
+
+CREATE TABLE IF NOT EXISTS biometric_employees (
+  employee_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS smtp_settings (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   smtp_host TEXT NOT NULL DEFAULT '',

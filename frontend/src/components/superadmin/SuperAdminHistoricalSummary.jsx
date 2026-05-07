@@ -1,3 +1,5 @@
+import { formatWholePercent } from '../../services/numberFormat'
+
 function formatValue(value, suffix = '') {
   if (value == null || value === '') return '-'
   return `${value}${suffix}`
@@ -7,8 +9,8 @@ export default function SuperAdminHistoricalSummary({ summary = {}, lastSnapshot
   const cards = [
     { label: 'Hosts', value: summary?.totalHosts },
     { label: 'VMs', value: summary?.totalVms },
-    { label: 'CPU Average', value: summary?.cpuAverage, suffix: '%' },
-    { label: 'Memory Average', value: summary?.memoryAverage, suffix: '%' },
+    { label: 'CPU Average', value: formatWholePercent(summary?.cpuAverage) },
+    { label: 'Memory Average', value: formatWholePercent(summary?.memoryAverage) },
     { label: 'Storage Total', value: summary?.totalStorage },
     { label: 'Avg Power', value: summary?.avgPowerKw, suffix: ' kW' },
   ]
@@ -31,7 +33,7 @@ export default function SuperAdminHistoricalSummary({ summary = {}, lastSnapshot
           <div key={card.label} className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
             <div className="text-xs font-bold uppercase tracking-[0.22em] text-slate-400">{card.label}</div>
             <div className="mt-3 text-3xl font-black tracking-tight text-slate-900">
-              {loading ? '...' : formatValue(card.value, card.suffix)}
+              {loading ? '...' : card.suffix ? formatValue(card.value, card.suffix) : card.value}
             </div>
           </div>
         ))}

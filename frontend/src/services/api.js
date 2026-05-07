@@ -1,5 +1,12 @@
 import { API } from '../constants/config'
 
+export const SESSION_KEYS = {
+  authToken: 'authToken',
+  authRole: 'authRole',
+  loginTime: 'loginTime',
+  hasRefreshed: 'hasRefreshed',
+}
+
 function decodeTokenPayload(token) {
   try {
     const payload = token?.split('.')[1]
@@ -14,19 +21,23 @@ function decodeTokenPayload(token) {
 }
 
 export function getAuthHeader() {
-  const token = localStorage.getItem('authToken')
+  const token = localStorage.getItem(SESSION_KEYS.authToken)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+export function getAuthToken() {
+  return localStorage.getItem(SESSION_KEYS.authToken) || ''
+}
+
 export function getAuthRole() {
-  const token = localStorage.getItem('authToken')
+  const token = localStorage.getItem(SESSION_KEYS.authToken)
   const payload = decodeTokenPayload(token)
   const tokenRole = payload?.role
-  const storedRole = localStorage.getItem('authRole')
+  const storedRole = localStorage.getItem(SESSION_KEYS.authRole)
 
   if (tokenRole) {
     if (storedRole !== tokenRole) {
-      localStorage.setItem('authRole', tokenRole)
+      localStorage.setItem(SESSION_KEYS.authRole, tokenRole)
     }
     return tokenRole
   }
@@ -36,17 +47,23 @@ export function getAuthRole() {
 }
 
 export function setAuthSession({ token, role = 'dashboard' }) {
-  localStorage.setItem('authToken', token)
-  localStorage.setItem('authRole', role)
+  localStorage.clear()
+  sessionStorage.clear()
+
+  localStorage.setItem(SESSION_KEYS.authToken, token)
+  localStorage.setItem(SESSION_KEYS.authRole, role)
+  localStorage.setItem(SESSION_KEYS.loginTime, String(Date.now()))
+  localStorage.setItem(SESSION_KEYS.hasRefreshed, 'false')
 }
 
 export function clearAuthSession() {
-  localStorage.removeItem('authToken')
-  localStorage.removeItem('authRole')
+  localStorage.clear()
+  sessionStorage.clear()
 }
 
 async function apiFetch(path) {
   const res = await fetch(`${API}${path}`, {
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
   })
 
@@ -80,11 +97,13 @@ export async function login(username, password) {
 }
 
 export async function logout() {
-  clearAuthSession()
+  const headers = getAuthHeader()
   try {
-    await fetch(`${API}/logout`, { method: 'POST', headers: getAuthHeader() })
+    await fetch(`${API}/logout`, { method: 'POST', headers })
   } catch (_error) {
     // no-op
+  } finally {
+    clearAuthSession()
   }
 }
 
@@ -122,4 +141,83 @@ export async function fetchPowerHistory() {
 
 export async function fetchRduSummary() {
   try { return await apiFetch('/rdu/summary') } catch (_error) { return null }
+}
+
+export async function fetchServerRoomAccessLogsByDate(date) {
+  const query = date ? `?date=${encodeURIComponent(date)}` : ''
+  const res = await fetch(`${API}/biometric/server-room${query}`, {
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+  })
+
+  if (res.status === 401) {
+    clearAuthSession()
+    window.location.href = '/login'
+    return []
+  }
+
+  if (!res.ok) {
+    let message = 'Failed to load biometric access logs'
+
+    try {
+      const errorData = await res.json()
+      message = errorData?.error || message
+    } catch (_error) {
+      // no-op
+    }
+
+    throw new Error(message)
+  }
+
+  return res.json()
+}
+
+export async function fetchServerRoomCameraStatus() {
+  const res = await fetch(`${API}/camera/server-room/live/status`, {
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+  })
+
+  if (!res.ok) {
+    let message = 'Failed to load camera stream status'
+
+    try {
+      const errorData = await res.json()
+      message = errorData?.error || message
+    } catch (_error) {
+      // no-op
+    }
+
+    throw new Error(message)
+  }
+
+  return res.json()
+}
+
+export async function addEmployeeWithFaces(payload) {
+  const res = await fetch(`${API}/biometric/add-employee`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null)
+    throw new Error(errorData?.error || 'Failed to add employee')
+  }
+
+  return res.json()
+}
+
+export async function reviewUnknownFace(payload) {
+  const res = await fetch(`${API}/biometric/review-unknown`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null)
+    throw new Error(errorData?.error || 'Failed to review unknown face')
+  }
+
+  return res.json()
 }

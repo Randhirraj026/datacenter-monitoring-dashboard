@@ -3,6 +3,7 @@ import LoginPage    from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import SuperAdminPage from './pages/SuperAdminPage'
 import { getAuthRole } from './services/api'
+import useSessionManager from './hooks/useSessionManager'
 
 function PrivateRoute({ children, role = null }) {
   const token = localStorage.getItem('authToken')
@@ -17,6 +18,8 @@ function PrivateRoute({ children, role = null }) {
 }
 
 export default function App() {
+  useSessionManager()
+
   return (
     <Routes>
       <Route path="/login"     element={<LoginPage />} />

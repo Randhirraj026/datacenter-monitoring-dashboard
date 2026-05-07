@@ -240,10 +240,67 @@ CREATE INDEX IF NOT EXISTS idx_ilo_psu_metrics_server_ts ON ilo_psu_metrics(ilo_
 CREATE INDEX IF NOT EXISTS idx_ilo_fan_metrics_server_ts ON ilo_fan_metrics(ilo_server_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_ilo_storage_metrics_server_ts ON ilo_storage_metrics(ilo_server_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_rdu_snapshots_ts ON rdu_snapshots(ts DESC);
+
+CREATE TABLE IF NOT EXISTS biometric_employees (
+  employee_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS employees (
+  employee_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  department TEXT NOT NULL DEFAULT 'General',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE IF EXISTS employees ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT 'General';
+
+CREATE TABLE IF NOT EXISTS face_embeddings (
+  id BIGSERIAL PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(employee_id) ON DELETE CASCADE,
+  embedding_vector JSONB NOT NULL,
+  source_image_path TEXT,
+  source_image_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE IF EXISTS face_embeddings ADD COLUMN IF NOT EXISTS source_image_path TEXT;
+ALTER TABLE IF EXISTS face_embeddings ADD COLUMN IF NOT EXISTS source_image_name TEXT;
+
+CREATE TABLE IF NOT EXISTS unknown_faces (
+  id BIGSERIAL PRIMARY KEY,
+  image_path TEXT NOT NULL,
+  "timestamp" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  review_status TEXT NOT NULL DEFAULT 'PENDING'
+);
+
+CREATE TABLE IF NOT EXISTS face_match_events (
+  id BIGSERIAL PRIMARY KEY,
+  employee_id TEXT REFERENCES employees(employee_id) ON DELETE SET NULL,
+  image_path TEXT NOT NULL,
+  similarity NUMERIC(8,5) NOT NULL DEFAULT 0,
+  classification TEXT NOT NULL DEFAULT 'AUTHORIZED',
+  "timestamp" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_employees_name ON employees(name);
+CREATE INDEX IF NOT EXISTS idx_face_embeddings_employee_id ON face_embeddings(employee_id);
+CREATE INDEX IF NOT EXISTS idx_unknown_faces_timestamp ON unknown_faces("timestamp" DESC);
+CREATE INDEX IF NOT EXISTS idx_unknown_faces_review_status ON unknown_faces(review_status);
+CREATE INDEX IF NOT EXISTS idx_face_match_events_timestamp ON face_match_events("timestamp" DESC);
+CREATE INDEX IF NOT EXISTS idx_face_match_events_employee_id ON face_match_events(employee_id);
 `;
 
 function isDbConfigured() {
     return Boolean(pool);
+}
+
+function getPool() {
+    return pool;
 }
 
 function keyify(value) {
@@ -299,8 +356,70 @@ async function initDb() {
     await pool.query(bootstrapSql);
     const { ensureDefaultRows } = require('./alertSettings');
     await ensureDefaultRows();
+    await seedBiometricEmployees();
     console.log('[DB] Schema ready');
     return true;
+}
+
+async function seedBiometricEmployees() {
+    if (!pool) return;
+
+    try {
+        const employeeCountResult = await pool.query('SELECT COUNT(*) FROM employees');
+        const employeeCount = Number.parseInt(employeeCountResult.rows[0].count, 10);
+        if (employeeCount > 0) return;
+
+        const legacyRows = await pool.query('SELECT employee_id, name FROM biometric_employees ORDER BY employee_id ASC');
+
+        if (legacyRows.rows.length > 0) {
+            console.log('[DB] Migrating legacy biometric employees into the new employees table...');
+            for (const row of legacyRows.rows) {
+                await pool.query(
+                    `INSERT INTO employees (employee_id, name, department, updated_at)
+                     VALUES ($1, $2, 'General', now())
+                     ON CONFLICT (employee_id)
+                    DO UPDATE SET name = EXCLUDED.name,
+                                   updated_at = now()`,
+                    [row.employee_id, row.name]
+                );
+                await pool.query(
+                    `INSERT INTO biometric_employees (employee_id, name, updated_at)
+                     VALUES ($1, $2, now())
+                     ON CONFLICT (employee_id)
+                     DO UPDATE SET name = EXCLUDED.name,
+                                   updated_at = now()`,
+                    [row.employee_id, row.name]
+                );
+            }
+            return;
+        }
+
+        const { DEFAULT_EMPLOYEE_MAP } = require('../services/biometricService');
+        if (!DEFAULT_EMPLOYEE_MAP || typeof DEFAULT_EMPLOYEE_MAP !== 'object') return;
+
+        console.log('[DB] Seeding biometric employees...');
+        for (const [id, name] of Object.entries(DEFAULT_EMPLOYEE_MAP)) {
+            await pool.query(
+                `INSERT INTO employees (employee_id, name, department, updated_at)
+                 VALUES ($1, $2, 'General', now())
+                 ON CONFLICT (employee_id)
+                 DO UPDATE SET name = EXCLUDED.name,
+                               updated_at = now()`,
+                [id, name]
+            );
+            await pool.query(
+                `INSERT INTO biometric_employees (employee_id, name, updated_at)
+                 VALUES ($1, $2, now())
+                 ON CONFLICT (employee_id)
+                 DO UPDATE SET name = EXCLUDED.name,
+                               updated_at = now()`,
+                [id, name]
+            );
+        }
+        console.log('[DB] Biometric employees seeded');
+    } catch (error) {
+        console.error('[DB] Failed to seed biometric employees:', error.message);
+    }
 }
 
 async function getHostIdMap(client, hosts) {
@@ -427,27 +546,42 @@ async function getIloServerIdMap(client, hosts, hostIdMap, iloPayload) {
     return map;
 }
 
-async function storeAlertSnapshot(client, alerts, now) {
-    for (const alert of alerts || []) {
-        const parsedAlertTime = alert.timestamp ? new Date(alert.timestamp) : null;
-        const alertTime = parsedAlertTime && !Number.isNaN(parsedAlertTime.getTime()) ? parsedAlertTime : now;
-        await client.query(
-            `INSERT INTO alert_snapshots (ts, alert_type, severity, message)
-             VALUES ($1, $2, $3, $4)`,
-            [
-                alertTime,
-                alert.type || 'SYSTEM',
-                alert.severity || 'info',
-                alert.message || 'No message',
-            ]
+async function storeAlertSnapshot(client, alertsRaw, now) {
+    const alerts = Array.isArray(alertsRaw) ? alertsRaw : (alertsRaw ? [alertsRaw] : []);
+    if (!alerts.length) return;
+
+    const executor = client || pool;
+    if (!executor) return;
+
+    for (const alert of alerts) {
+        const message = alert.message || 'No message';
+        const type = alert.type || 'SYSTEM';
+        const severity = normalizeStoredAlertSeverity(alert.severity);
+        
+        // Check for duplicates in the last 15 minutes to avoid spamming the bell
+        const recentCheck = await executor.query(
+            "SELECT id FROM alert_snapshots WHERE message = $1 AND ts > now() - interval '15 minutes' LIMIT 1",
+            [message]
         );
+
+        if (recentCheck.rows.length === 0) {
+            const parsedAlertTime = alert.timestamp ? new Date(alert.timestamp) : null;
+            const alertTime = parsedAlertTime && !Number.isNaN(parsedAlertTime.getTime()) ? parsedAlertTime : now;
+            
+            await executor.query(
+                `INSERT INTO alert_snapshots (ts, alert_type, severity, message)
+                 VALUES ($1, $2, $3, $4)`,
+                [alertTime, type, severity, message]
+            );
+        }
     }
 }
 
 function normalizeStoredAlertSeverity(value) {
-    const normalized = String(value || 'info').toLowerCase();
-    if (normalized === 'critical' || normalized === 'warning' || normalized === 'info') return normalized;
-    return 'info';
+    const raw = String(value || 'info').toLowerCase();
+    if (raw === 'critical') return 'Critical';
+    if (raw === 'warning') return 'Warning';
+    return 'Info';
 }
 
 function inferGeneratedAlertSeverity(event = {}) {
@@ -457,18 +591,25 @@ function inferGeneratedAlertSeverity(event = {}) {
     if (
         type.includes('HOST_DOWN')
         || type.includes('POWER_FAILURE')
-        || type.includes('RDU_ALERT')
+        || type.includes('RDU_DOOR_OPEN')
+        || type.includes('RDU_SENSOR_FAILURE')
+        || type.includes('RDU_ALARM_COUNT')
         || subject.includes('CRITICAL')
         || subject.includes('POWER FAILURE')
     ) {
-        return 'critical';
+        return 'Critical';
     }
 
-    if (type.includes('SPIKE') || type.includes('CHANGE') || subject.includes('CHANGE')) {
-        return 'warning';
+    if (
+        type.includes('SPIKE')
+        || type.includes('CHANGE')
+        || type.includes('WARNING')
+        || subject.includes('CHANGE')
+    ) {
+        return 'Warning';
     }
 
-    return 'info';
+    return 'Info';
 }
 
 function buildGeneratedAlertMessage(event = {}) {
@@ -487,6 +628,26 @@ function buildGeneratedAlertMessage(event = {}) {
             return vmName ? `VM ${vmName} has been powered off` : (event.subject || 'VM powered off');
         case 'HOST_DOWN':
             return hostName ? `Host ${hostName} is unavailable` : (event.subject || 'Host down');
+        case 'CPU_THRESHOLD':
+            return `High CPU usage on ${hostName || 'host'}: ${details['Current CPU Usage'] || 'Unknown'}`;
+        case 'MEMORY_THRESHOLD':
+            return `High Memory usage on ${hostName || 'host'}: ${details['Current Memory Usage'] || 'Unknown'}`;
+        case 'TEMPERATURE_THRESHOLD':
+            return `High Temperature on ${hostName || 'host'}: ${details['Current Temperature'] || 'Unknown'}`;
+        case 'DISK_THRESHOLD':
+            return `High Disk usage on ${details.Datastore || 'datastore'}: ${details['Current Disk Usage'] || 'Unknown'}`;
+        case 'RDU_DOOR_OPEN':
+            return `${details.Sensor || 'RDU sensor'} opened`;
+        case 'RDU_DOOR_CLOSED':
+            return `${details.Sensor || 'RDU sensor'} closed`;
+        case 'RDU_SENSOR_FAILURE':
+            return `${details.Sensor || 'RDU sensor'} is offline or critical`;
+        case 'RDU_SENSOR_WARNING':
+            return `${details.Sensor || 'RDU sensor'} is in warning state`;
+        case 'RDU_SENSOR_RECOVERED':
+            return `${details.Sensor || 'RDU sensor'} recovered`;
+        case 'RDU_ALARM_COUNT':
+            return details.Message || details.Alert || 'RDU reported an alarm';
         default:
             return event.subject || details.Message || 'Alert generated';
     }
@@ -517,6 +678,7 @@ function mapAlertSnapshotRow(row) {
     return {
         id: row.id,
         type: row.alert_type || 'SYSTEM',
+        alertType: row.alert_type || 'SYSTEM',
         severity: normalizeStoredAlertSeverity(row.severity),
         message: row.message || 'Alert generated',
         timestamp: row.ts instanceof Date ? row.ts.toISOString() : row.ts,
@@ -532,6 +694,9 @@ async function getRecentAlertSnapshots(limit = 20) {
     const result = await pool.query(
         `SELECT id, ts, alert_type, severity, message
          FROM alert_snapshots
+         UNION ALL
+         SELECT id, ts, 'VM_EVENT' AS alert_type, 'Info' AS severity, (vm_name || ' ' || event_type) AS message
+         FROM vm_events
          ORDER BY ts DESC, id DESC
          LIMIT $1`,
         [safeLimit]
@@ -786,8 +951,21 @@ async function syncVirtualMachines(client, vms, hostIdMap, now) {
         }
     }
 
+    const DELETION_GRACE_PERIOD_MS = 0; // Immediate (Requested by user)
+    const MIN_VMS_FOR_SAFETY = 5;
+    const SUPPRESSION_THRESHOLD = 50; // Threshold to prevent alert storms after maintenance
+
+    // Safety Guard: If API returns 0 vms but we have a non-trivial active inventory,
+    // do not mark anything as deleted (treat as API failure).
+    if (vms.length === 0 && existingResult.rows.filter(r => !r.is_deleted).length >= MIN_VMS_FOR_SAFETY) {
+        console.warn(`[DB] syncVirtualMachines: API returned 0 vms but DB has active inventory. Skipping deletion phase to prevent false alerts.`);
+        return changes;
+    }
+
     for (const row of existingResult.rows) {
         if (!isBaselineSeed && !row.is_deleted && !seenVmNames.has(row.vm_name)) {
+            // Immediate deletion: logic removed as requested for instant notifications
+
             await client.query(
                 `UPDATE virtual_machines
                  SET is_deleted = TRUE,
@@ -812,6 +990,20 @@ async function syncVirtualMachines(client, vms, hostIdMap, now) {
                 powerState: row.last_power_state || row.status || 'STOPPED',
             });
         }
+    }
+
+    // Mass Change Suppression: If a massive shift is detected (>50 VMs added or deleted),
+    // and it is NOT a fresh install (isBaselineSeed = FALSE), suppress the change list 
+    // to avoid an alert storm (e.g., after a DB restore from older data).
+    const totalChanges = changes.added.length + changes.deleted.length;
+    if (!isBaselineSeed && totalChanges > SUPPRESSION_THRESHOLD) {
+        console.warn(`[DB] Massive inventory shift detected (${totalChanges} VMs). Alert suppression active.`);
+        return {
+            added: [],
+            deleted: [],
+            suppressed: true,
+            originalCount: totalChanges
+        };
     }
 
     return changes;
@@ -908,7 +1100,6 @@ async function getSuperAdminBundle(filters = {}) {
     if (validVmId) {
         vmEventFilters.push(` AND vm.id = $${nextVmEventParam}`);
         paramsForVmEvents.push(vmId);
-        nextVmEventParam += 1;
     }
 
     const [hostsResult, vmsResult, datastoresResult, hostMetricsResult, datastoreMetricsResult, vmEventsResult] = await Promise.all([
@@ -1442,6 +1633,7 @@ async function getSuperAdminSectionDetails(filters = {}) {
             `,
             dataSql: `
                 SELECT
+                  hm.host_id AS "hostId",
                   hm.ts AS timestamp,
                   h.host_name AS "hostName",
                   ROUND(hm.cpu_usage_pct, 2) AS "cpuUsagePct",
@@ -1469,6 +1661,7 @@ async function getSuperAdminSectionDetails(filters = {}) {
             `,
             dataSql: `
                 SELECT
+                  hm.host_id AS "hostId",
                   hm.ts AS timestamp,
                   h.host_name AS "hostName",
                   ROUND(hm.memory_usage_pct, 2) AS "memoryUsagePct",
@@ -1817,6 +2010,7 @@ module.exports = {
     FIVE_MINUTES_MS,
     initDb,
     isDbConfigured,
+    getPool,
     pool,
     storeSnapshot,
     storeGeneratedAlertEvents,

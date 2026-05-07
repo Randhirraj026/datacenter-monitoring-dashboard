@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { exportRowsToCsv } from '../../services/superAdminApi'
 import { mapIpName } from '../../services/ipMapper'
+import { roundCpuMemoryTableValue } from '../../services/numberFormat'
 
 const RANGE_OPTIONS = [
   { value: '15m', label: 'Last 15 Min' },
@@ -26,7 +27,7 @@ function formatCellValue(key, value) {
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (value == null || value === '') return '-'
   if (typeof value === 'string') return mapIpName(value)
-  return value
+  return roundCpuMemoryTableValue(key, value)
 }
 
 export default function SuperAdminDetailsModal({

@@ -1,9 +1,11 @@
 import { Line } from 'react-chartjs-2';
 import { Chart, registerables } from 'chart.js';
+import { roundWholeNumber } from '../../services/numberFormat';
 
 Chart.register(...registerables);
 
-export default function PredictionChart({ historicalData, predictedData, showPredictions }) {
+export default function PredictionChart({ metric, historicalData, predictedData, showPredictions }) {
+  const roundCpuMemory = metric === 'cpu' || metric === 'memory'
   const labels = new Set([
     ...(historicalData || []).map(d => d.timestamp),
     ...(showPredictions ? (predictedData || []).map(d => d.timestamp) : [])
@@ -19,12 +21,12 @@ export default function PredictionChart({ historicalData, predictedData, showPre
   (historicalData || []).forEach(d => {
     let val = d.cpuUsagePct ?? d.memoryUsagePct ?? d.powerKw ?? d.temperatureC ?? d.value;
     if (val !== undefined && val !== null) {
-        histMap.set(d.timestamp, val);
+        histMap.set(d.timestamp, roundCpuMemory ? roundWholeNumber(val) : val);
     }
   });
 
   const predMap = new Map();
-  (predictedData || []).forEach(d => predMap.set(d.timestamp, d.value));
+  (predictedData || []).forEach(d => predMap.set(d.timestamp, roundCpuMemory ? roundWholeNumber(d.value) : d.value));
   
   const datasets = [
     {
@@ -72,7 +74,7 @@ export default function PredictionChart({ historicalData, predictedData, showPre
               label += ': ';
             }
             if (context.parsed.y !== null) {
-              label += context.parsed.y.toFixed(2);
+              label += roundCpuMemory ? Math.round(context.parsed.y) : context.parsed.y.toFixed(2);
             }
             return label;
           }
